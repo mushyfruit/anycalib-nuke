@@ -1,0 +1,24 @@
+# Python env for tools/ (uv pip freeze). The PyTorch CPU index mirrors numpy, pillow etc.
+# at other versions, hence unsafe-best-match:
+#   uv venv --python 3.12 .venv
+#   uv pip install --python .venv/bin/python --index-strategy unsafe-best-match -r tools/requirements.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+anycalib @ git+https://github.com/javrtg/AnyCalib.git@027a8497d893f4b2596f23d6324c05e4b81064ed
+torch==2.7.1+cpu  # the libtorch in Nuke 17: the export has to match it
+numpy==2.5.4
+pillow==12.3.0
+safetensors==0.8.0
+omegaconf==2.4.0  # unpickling AnyCalib training checkpoints
+
+# transitive
+filelock==4.1.1
+fsspec==2026.9.0
+jinja2==3.1.6
+markupsafe==3.0.4
+mpmath==1.3.0
+networkx==3.7
+pyyaml==6.0.3
+setuptools==84.0.0
+sympy==1.14.0
+typing-extensions==4.16.0

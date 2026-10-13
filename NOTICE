@@ -1,0 +1,14 @@
+anycalib-nuke
+=============
+
+This project depends on the following works.
+
+* AnyCalib, Javier Tirado-Garín and Javier Civera, github.com/javrtg/AnyCalib.
+  Licensed under the Apache License, Version 2.0. The network weights are
+  downloaded and exported by tools/export_anycalib.py; they are not part of
+  this repository.
+
+* PyTorch (libtorch), BSD-3-Clause License. Its headers are fetched at build
+  time; the plugin runs on the libtorch libraries Nuke ships and bundles none.
+
+* Nuke NDK headers, Foundry. Used under the Nuke NDK terms; not redistributed.

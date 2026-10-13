@@ -1,0 +1,9 @@
+# build + fetched dependencies
+build/
+.venv/
+__pycache__/
+
+# exported networks (large; produced by tools/export_anycalib.py)
+models/
+
+out/
