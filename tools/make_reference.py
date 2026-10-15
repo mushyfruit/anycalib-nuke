@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reference intrinsics from AnyCalib's own Python pipeline (not the exported network), for
 tests/compare_reference.py. Runs AnyCalib.predict on every image in --images-dir as in
-AnyCalib's README and writes {filename: {width, height, fx, fy, cx, cy, k1, k2, ...}}.
+AnyCalib's README and writes {filename: {width, height, f, cx, cy, k1, k2, ...}}.
 Pixel centres are at +0.5 (OpenCV puts them at integers).
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ def main(argv=None) -> int:
     p.add_argument("--images-dir", default="test-assets")
     p.add_argument("--output", default="test-assets/reference.json")
     p.add_argument("--model-id", default="anycalib_dist")
-    p.add_argument("--cam-id", default="radial:2")
+    p.add_argument("--cam-id", default="simple_division:2")
     p.add_argument("--weights", default=None, help="optional fine-tuned checkpoint (see export_anycalib.py)")
     p.add_argument("--non-strict", action="store_true")
     p.add_argument("--device", default="cpu")

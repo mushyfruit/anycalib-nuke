@@ -44,15 +44,13 @@ static bool ReadImage(const std::string& path, int& w, int& h, std::vector<float
   return true;
 }
 
-static void Print(const char* name, int W, int H, const OpenCVRadial& cv, const NukeLD& nk,
-                  double focal, const FitStats& st, double ms) {
+static void Print(const char* name, int W, int H, const NukeLD& nk, double focal,
+                  const FitStats& st, double ms) {
   std::printf(
       "{\"image\": \"%s\", \"width\": %d, \"height\": %d, "
-      "\"opencv\": {\"fx\": %.4f, \"fy\": %.4f, \"cx\": %.4f, \"cy\": %.4f, \"k1\": %.6f, \"k2\": %.6f}, "
       "\"nuke\": {\"distortion1\": %.6f, \"distortion2\": %.6f, \"centre\": [%.6f, %.6f], \"focal\": %.4f}, "
       "\"rms_deg\": %.4f, \"corner_shift_px\": %.3f, \"ms\": %.1f}\n",
-      name, W, H, cv.fx, cv.fy, cv.cx, cv.cy, cv.k1, cv.k2, nk.k1, nk.k2, nk.cx, nk.cy, focal,
-      st.rmsDeg, CornerShiftPx(nk), ms);
+      name, W, H, nk.k1, nk.k2, nk.cx, nk.cy, focal, st.rmsDeg, CornerShiftPx(nk), ms);
 }
 
 int main(int argc, char** argv) {
@@ -75,15 +73,14 @@ int main(int argc, char** argv) {
     std::vector<RaySample> s;
     if (!eng->Infer(rgb.data(), W, H, 1.0, s, &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    OpenCVRadial cv;
     NukeLD nk;
     double focal;
     FitStats st;
-    if (!FitOpenCVRadial(s, cv, nullptr, &err) || !FitNukeLD(s, W, H, 1.0, cv, nk, focal, &st, &err)) {
+    if (!FitNukeLD(s, W, H, 1.0, nk, focal, &st, &err)) {
       std::fprintf(stderr, "fit failed: %s\n", err.c_str());
       return 1;
     }
-    Print(argv[i], W, H, cv, nk, focal, st, ms);
+    Print(argv[i], W, H, nk, focal, st, ms);
   }
   return 0;
 }

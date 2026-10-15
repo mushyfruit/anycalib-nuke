@@ -155,22 +155,6 @@ double RmsDeg(const Problem& pb, const double* p) {
   return L.valid ? std::sqrt(L.cost) * kRadToDeg : 0;
 }
 
-// AnyCalib's refinement (optim/gauss_newton.py): undamped Gauss-Newton for a fixed number
-// of iterations, kept only if it lowered the cost.
-void GaussNewton(const Problem& pb, double* p, int iters) {
-  double q[kMaxParams];
-  std::copy(p, p + kMaxParams, q);
-  Linearisation L = Linearise(pb, q);
-  const double cost0 = L.cost;
-  for (int it = 0; it < iters; ++it) {
-    double d[kMaxParams];
-    if (L.valid <= size_t(pb.np) || !L.ne.solve(0, d)) break;
-    for (int j = 0; j < pb.np; ++j) q[j] += d[j];
-    L = Linearise(pb, q);
-  }
-  if (L.cost < cost0) std::copy(q, q + pb.np, p);
-}
-
 // A step mustn't lose samples: pushing them out of the invertible range would look like a gain.
 void LevenbergMarquardt(const Problem& pb, double* p, int iters) {
   Linearisation cur = Linearise(pb, p);
@@ -198,60 +182,32 @@ void LevenbergMarquardt(const Problem& pb, double* p, int iters) {
   }
 }
 
-// AnyCalib's radial:2 camera, p = [fx, fy, cx, cy, k1, k2]. The undistorted point w solves
-// w D(|w|^2) = w0, with w0 the distorted point and D = 1 + k1 r^2 + k2 r^4, so
-// (D I + a w w^T) dw = dw0 - w dD|w, a = 2 dD/d(r^2), which Sherman-Morrison inverts.
-bool ProjectOpenCV(const RaySample& s, const double* p, Projection& q) {
-  const OpenCVRadial m{p[0], p[1], p[2], p[3], p[4], p[5]};
-  double xu, yu;
-  if (!m.undistort(s.u, s.v, xu, yu)) return false;
-  q.x = (xu - m.cx) / m.fx;
-  q.y = (yu - m.cy) / m.fy;
-  const double x0 = (s.u - m.cx) / m.fx, y0 = (s.v - m.cy) / m.fy;
-  const double r2 = q.x * q.x + q.y * q.y;
-  const double D = 1 + m.k1 * r2 + m.k2 * r2 * r2;
-  const double a = 2 * (m.k1 + 2 * m.k2 * r2);
-  const double den = D + a * r2;  // 1 + 3 k1 r^2 + 5 k2 r^4
-  const double b[6][2] = {{-x0 / m.fx, 0}, {0, -y0 / m.fy}, {-1 / m.fx, 0}, {0, -1 / m.fy},
-                          {-q.x * r2, -q.y * r2}, {-q.x * r2 * r2, -q.y * r2 * r2}};
-  for (int j = 0; j < 6; ++j) {
-    const double wb = a * (q.x * b[j][0] + q.y * b[j][1]) / den;
-    q.dx[j] = (b[j][0] - wb * q.x) / D;
-    q.dy[j] = (b[j][1] - wb * q.y) / D;
+// AnyCalib's Division.fit in desqueezed pixels (X, Y) = (u pa, v): the centre from
+// (X - Xc) ry = (Y - Yc) rx, then rz |d| = |(rx, ry)| F (1 + k1 |d|^2 + k2 |d|^4), F = f / S.
+bool LinearFit(const std::vector<RaySample>& s, double pa, double S, bool fixCentre, double* p) {
+  if (!fixCentre) {
+    Normal ne(2);
+    for (const RaySample& r : s) {
+      const double a[2] = {r.ry, -r.rx};
+      ne.add(a, r.u * pa * r.ry - r.v * r.rx);
+    }
+    double c[2];
+    if (!ne.solve(0, c)) return false;
+    p[3] = c[0] / pa;
+    p[4] = c[1];
   }
-  return true;
-}
-
-// AnyCalib's linear fit (Radial.fit). With (x, y) a ray's pinhole projection and r its
-// radius, u / fx - cx / fx - k1 x r^2 - k2 x r^4 = x is linear in
-// [1/fx, 1/fy, cx/fx, cy/fy, k1, k2], and likewise for v. Pixel coordinates are divided
-// by their maximum per axis for conditioning. Rays more than 85 degrees off-axis
-// (AnyCalib's max_fov of 170) are left out: their projections explode and wreck the fit
-// on wide lenses.
-bool LinearFit(const std::vector<RaySample>& s, double p[6]) {
-  double su = 1, sv = 1;
+  Normal ne(3);
   for (const RaySample& r : s) {
-    su = std::max(su, double(r.u));
-    sv = std::max(sv, double(r.v));
+    const double dx = (r.u - p[3]) * pa / S, dy = (r.v - p[4]) / S;
+    const double r2 = dx * dx + dy * dy, R = std::hypot(double(r.rx), double(r.ry));
+    const double a[3] = {R, R * r2, R * r2 * r2};
+    ne.add(a, r.rz * std::sqrt(r2));
   }
-  const double cosMax = std::cos(85 / kRadToDeg);
-  Normal ne(6);
-  int used = 0;
-  for (const RaySample& r : s) {
-    if (r.rz < cosMax * std::sqrt(double(r.rx) * r.rx + double(r.ry) * r.ry + double(r.rz) * r.rz))
-      continue;
-    const double x = double(r.rx) / r.rz, y = double(r.ry) / r.rz, r2 = x * x + y * y;
-    const double ax[6] = {r.u / su, 0, -1, 0, -x * r2, -x * r2 * r2};
-    const double ay[6] = {0, r.v / sv, 0, -1, -y * r2, -y * r2 * r2};
-    ne.add(ax, x);
-    ne.add(ay, y);
-    ++used;
-  }
-  double z[6];
-  if (used < 20 || !ne.solve(0, z) || !(z[0] > 0 && z[1] > 0)) return false;
-  const double fx = su / z[0], fy = sv / z[1];
-  const double init[6] = {fx, fy, z[2] * fx, z[3] * fy, z[4], z[5]};
-  std::copy(init, init + 6, p);
+  double z[3];
+  if (!ne.solve(0, z) || !(z[0] > 0)) return false;
+  p[0] = z[0] * S;
+  p[1] = z[1] / z[0];
+  p[2] = z[2] / z[0];
   return true;
 }
 
@@ -264,37 +220,17 @@ std::vector<RaySample> Thin(const std::vector<RaySample>& s, size_t maxN) {
   return out;
 }
 
-bool FitOpenCVRadial(const std::vector<RaySample>& s, OpenCVRadial& out, FitStats* stats,
-                     std::string* err) {
+bool FitNukeLD(const std::vector<RaySample>& s, int W, int H, double pa, NukeLD& out,
+               double& focalPx, FitStats* stats, std::string* err, bool fixCentre) {
   Problem pb;
   if (!Prepare(s, pb, err)) return false;
-  double p[kMaxParams];
-  if (!LinearFit(pb.samples, p)) {
+  const double S = 0.5 * std::max(W, H);
+  // p = [f, k1, k2, cx, cy], the centre in image pixels (y down).
+  double p[kMaxParams] = {0, 0, 0, 0.5 * W, 0.5 * H};
+  if (!LinearFit(pb.samples, pa, S, fixCentre, p)) {
     if (err) *err = "linear fit failed";
     return false;
   }
-  pb.model = ProjectOpenCV;
-  pb.np = 6;
-  GaussNewton(pb, p, 10);         // AnyCalib's own refinement
-  LevenbergMarquardt(pb, p, 30);  // polish: only ever lowers the cost
-  if (!(p[0] > 0 && p[1] > 0) || !std::isfinite(p[4]) || !std::isfinite(p[5])) {
-    if (err) *err = "refinement diverged";
-    return false;
-  }
-  out = OpenCVRadial{p[0], p[1], p[2], p[3], p[4], p[5]};
-  if (stats) stats->rmsDeg = RmsDeg(pb, p);
-  return true;
-}
-
-bool FitNukeLD(const std::vector<RaySample>& s, int W, int H, double pa, const OpenCVRadial& init,
-               NukeLD& out, double& focalPx, FitStats* stats, std::string* err, bool fixCentre) {
-  Problem pb;
-  if (!Prepare(s, pb, err)) return false;
-  const NukeLD nk0 = OpenCVToNuke(init, W, H, pa);
-  const double S = nk0.s();
-  // p = [f, k1, k2, cx, cy], the centre in image pixels (y down).
-  double p[kMaxParams] = {0.5 * (init.fx * pa + init.fy), nk0.k1, nk0.k2,
-                          fixCentre ? 0.5 * W : init.cx, fixCentre ? 0.5 * H : init.cy};
   pb.np = fixCentre ? 3 : 5;
   // n = (u - c) (pa, 1) / S, w = n S / (f D), D = 1 + k1 |n|^2 + k2 |n|^4.
   pb.model = [pa, S](const RaySample& r, const double* p, Projection& q) {

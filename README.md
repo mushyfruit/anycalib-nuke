@@ -33,6 +33,8 @@ The node is under Transform > AnyCalib.
    `lock centre` keeps `distortionCenter` at 0.
 3. Press Analyze. It samples up to `max frames` frames evenly over the input range (or a
    custom one) and pools them into one fit. The lens is assumed fixed over the range.
+   It uses the active viewer's view, or the first project view headlessly. Analyze stereo
+   views separately. Format changes, failures and incomplete runs keep the previous result.
 4. Press Create LensDistortion, or turn on `write STMaps` and undistort with an STMap
    (`uv = forward`) or redistort CG with `uv = backward`. CG needs the overscan shown in the
    `overscan` knob.
@@ -47,11 +49,13 @@ TorchScript optimises the graph. On the CPU a frame takes about 0.7 s.
 - `fit RMS`: the RMS angle between the network's rays and the fitted lens. It's large when
   the lens model can't follow the network, as on a fisheye, but says nothing about whether
   the network is right.
-- `frame spread`: the standard deviation, over the analysed frames, of each frame's largest
-  corner shift in pixels. 0 for a single frame.
+- `frame spread`: the largest standard deviation of undistorted positions on a 9×9 grid
+  across the plate, in pixels. This includes displacement direction and centre changes.
+  0 for a single frame; it measures consistency, not accuracy against a known lens.
 - `plumb-line scale`: a check that doesn't involve the network. The distortion is scaled by
   α ∈ [0, 2] to find where the detected lines are straightest. α near 1 agrees with the
-  estimate. It's 1 when the lines don't react to α.
+  estimate only when `plumb-line evidence` is on. When that check is off, the lines cannot
+  assess the distortion and the scale defaults to 1.
 
 ### Metadata
 
@@ -61,6 +65,7 @@ TorchScript optimises the graph. On the CPU a frame takes about 0.7 s.
 | `lens/k1`, `lens/k2` | `distortion1`, `distortion2` |
 | `lens/centre`, `lens/centre_px` | `distortionCenter` (normalised, y up), and in pixels |
 | `lens/fit_rms_deg`, `lens/frame_spread_px`, `lens/plumbline_alpha` | see above |
+| `lens/plumbline_informative` | 1 if the lines can assess distortion, otherwise 0 |
 | `lens/focal_px` | focal length of the fit, in pixels |
 | `lens/frames` | analysed range, e.g. `1001-1100 (24 frames)` |
 | `lens/estimator`, `lens/estimator_version` | `AnyCalib`; plugin and libtorch versions, CUDA or CPU |
@@ -75,8 +80,9 @@ The EXR writer prefixes them with `nuke/` unless *do not attach prefix* is on.
 - Linux only.
 - Spherical lenses only. Non-square pixels are handled through the format's pixel aspect, but
   anamorphic squeeze isn't estimated.
-- AnyCalib's `radial:2` model breaks down past about 70° off-axis, so fisheyes are out of reach.
-  On the GoPro HERO4 plate the plumb-line check flags the result.
+- Fisheyes are out of reach. The fit follows them, but undistorting one to a pinhole image
+  moves its corners thousands of pixels. On the GoPro HERO4 plate the plumb-line check flags
+  the result.
 - One lens per analysed range: zooms and focus breathing need separate ranges.
 - LensDistortion2 writes (−1, −1) in its undistort map at some off-plate pixels; this node
   only does so where there's no inverse.

@@ -102,37 +102,6 @@ int main() {
     }
     Check("Auto bboxes == LensDistortion2", worst <= 1, F("max %.0f px", worst));
   }
-  {
-    OpenCVRadial c{1400, 1400, 960, 540, -0.12, 0.02};
-    double worst = 0;
-    for (int j = 0; j <= 20; ++j)
-      for (int i = 0; i <= 20; ++i) {
-        double x = 1920.0 * i / 20, y = 1080.0 * j / 20, xu, yu, xd, yd;
-        c.undistort(x, y, xu, yu);
-        c.distort(xu, yu, xd, yd);
-        worst = std::max(worst, std::hypot(xd - x, yd - y));
-      }
-    Check("OpenCV distort(undistort(p)) == p", worst < 1e-6, F("max %.2e px", worst));
-  }
-
-  // OpenCV fit recovers an OpenCV camera
-  {
-    const int W = 1920, H = 1080;
-    OpenCVRadial gt{1400, 1390, 951.5, 547.25, -0.12, 0.02};
-    auto s = Synth(W, H, [&](double u, double v, double* r) {
-      double xu, yu;
-      gt.undistort(u, v, xu, yu);
-      r[0] = (xu - gt.cx) / gt.fx; r[1] = (yu - gt.cy) / gt.fy; r[2] = 1;
-    });
-    OpenCVRadial fit;
-    FitStats st;
-    std::string err;
-    bool ok = FitOpenCVRadial(s, fit, &st, &err);
-    Check("OpenCV fit recovers the camera",
-          ok && std::fabs(fit.fx - gt.fx) < 0.05 && std::fabs(fit.cy - gt.cy) < 0.05 &&
-              std::fabs(fit.k1 - gt.k1) < 1e-4 && std::fabs(fit.k2 - gt.k2) < 1e-4,
-          F("fx %.3f k1 %.6f k2 %.6f", fit.fx, fit.k1, fit.k2) + F(" rms %.2e deg", st.rmsDeg));
-  }
 
   struct Case { int W, H; double pa, f, k1, k2, cx, cy; };
   for (Case c : {Case{1920, 1080, 1.0, 1500, -0.08, 0.01, 0.01, -0.02},   // barrel
@@ -148,13 +117,11 @@ int main() {
       gt.undistort(u, c.H - v, xu, yu);  // Nuke is y-up
       r[0] = (xu - cxImg) * c.pa / c.f; r[1] = ((c.H - yu) - cyImg) / c.f; r[2] = 1;
     });
-    OpenCVRadial init;
     NukeLD fit;
     double f = 0;
     FitStats st;
     std::string err;
-    bool ok = FitOpenCVRadial(s, init, nullptr, &err) &&
-              FitNukeLD(s, c.W, c.H, c.pa, init, fit, f, &st, &err);
+    bool ok = FitNukeLD(s, c.W, c.H, c.pa, fit, f, &st, &err);
     const double shiftErr = std::fabs(CornerShiftPx(fit) - CornerShiftPx(gt));
     Check(("Nuke fit recovers LensDistortion " + std::to_string(c.W) + "x" + std::to_string(c.H) +
            (c.pa != 1.0 ? " pixel aspect " + std::to_string(int(c.pa)) : "")).c_str(),
@@ -163,14 +130,6 @@ int main() {
               std::fabs(f - c.f) < 0.1 && shiftErr < 0.05,
           F("k1 %.6f (gt %.3f) f %.3f", fit.k1, gt.k1, f) + F(" centre %.6f %.6f", fit.cx, fit.cy) +
               (ok ? "" : " err=" + err) + F(" (s=%.0f)", S));
-  }
-
-  // OpenCV -> Nuke conversion: small for moderate lenses, same sign
-  {
-    double e;
-    NukeLD n = OpenCVToNuke(OpenCVRadial{1400, 1400, 960, 540, -0.12, 0.02}, 1920, 1080, 1.0, &e);
-    Check("OpenCV->Nuke conversion (moderate barrel)", e < 0.5 && n.k1 < 0,
-          F("max %.3f px, k1 %.5f (first order %.5f)", e, n.k1, -0.12 * std::pow(960.0 / 1400, 2)));
   }
 
   std::printf("\n%s\n", failures ? "FAILED" : "all passed");

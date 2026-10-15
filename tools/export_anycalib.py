@@ -73,11 +73,13 @@ def _exact_interp(vit):
 
 
 class RayField(nn.Module):
-    """AnyCalib's network without its calibrator: image (B, 3, H, W) -> unit rays (B, H*W, 3)."""
+    """AnyCalib's network without its calibrator: image (B, 3, H, W) -> unit rays (B, H*W, 3).
+    `resolution`, the input pixel budget, is stored for the plugin to read."""
 
-    def __init__(self, model):
+    def __init__(self, model, resolution):
         super().__init__()
         self.backbone, self.decoder, self.head = model.backbone, model.decoder, model.head
+        self.register_buffer("resolution", torch.tensor(resolution))
 
     def forward(self, image):
         rays = self.head(self.decoder(self.backbone(image)))["rays"]  # (B, 3, H, W)
@@ -111,7 +113,7 @@ def load_weights(m: nn.Module, path: str | os.PathLike, strict: bool = True) -> 
                          f"missing {missing[:8]}, unexpected {unexpected[:8]}")
 
 
-def load_plugin_input(image_path):
+def load_plugin_input(image_path, resolution):
     """The image as the plugin feeds it to the network: AnyCalib's own preprocessing."""
     from anycalib import AnyCalib
     from PIL import Image, ImageOps
@@ -120,7 +122,7 @@ def load_plugin_input(image_path):
     t = torch.from_numpy(np.array(im, dtype=np.float32) / 255.0).permute(2, 0, 1)[None]
     h, w = t.shape[-2:]
     ar = max(AnyCalib.AR_RANGE[0], min(h / w, AnyCalib.AR_RANGE[1]))
-    hp, wp = AnyCalib.compute_target_size(AnyCalib, AnyCalib.RESOLUTION, ar)
+    hp, wp = AnyCalib.compute_target_size(AnyCalib, resolution, ar)
     x, _, _ = AnyCalib.set_im_size(t, (hp, wp))
     return x.contiguous()
 
@@ -140,6 +142,8 @@ def main(argv=None) -> int:
     ap.add_argument("--model-id", default="anycalib_dist", help="AnyCalib's pretrained model")
     ap.add_argument("--weights", help="fine-tuned checkpoint loaded over --model-id")
     ap.add_argument("--non-strict", action="store_true", help="allow missing or unexpected keys")
+    ap.add_argument("--resolution", type=int, default=102400,
+                    help="input pixels the weights were trained at (102400 for AnyCalib's own)")
     ap.add_argument("--verify-image", help="compare the TorchScript and PyTorch rays on this image")
     args = ap.parse_args(argv)
     if not torch.__version__.startswith("2.7.1"):
@@ -151,9 +155,9 @@ def main(argv=None) -> int:
     model = AnyCalib(model_id=args.model_id).eval()
     if args.weights:
         load_weights(model, args.weights, strict=not args.non_strict)
-    net = RayField(model).eval()
+    net = RayField(model, args.resolution).eval()
     if args.verify_image:
-        x = load_plugin_input(args.verify_image)
+        x = load_plugin_input(args.verify_image, args.resolution)
         with torch.inference_mode():
             upstream = net(x).numpy()
 
@@ -167,6 +171,7 @@ def main(argv=None) -> int:
     traced.save(args.output)
 
     traced = torch.jit.load(args.output)  # as the plugin loads it
+    assert int(traced.resolution) == args.resolution
     with torch.inference_mode():
         for h, w in ((238, 420), (322, 322)):  # 322 x 322 takes upstream's square short-circuit
             assert traced(torch.rand(1, 3, h, w)).shape == (1, h * w, 3)

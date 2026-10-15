@@ -2,6 +2,9 @@
 
 Commands are run from the repo root.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the analysis boundaries and the proposed
+calibration and training experiments.
+
 ## Network
 
 The network is exported to TorchScript from AnyCalib's PyTorch weights, with torch 2.7.1 to
@@ -19,8 +22,8 @@ state_dict or `.safetensors`). The node looks for the network in `model override
 tab), then `$ANYCALIB_MODEL_PATH`, then `models/anycalib_dist.pt` next to the plugin. The
 file's SHA-256 goes into the metadata, so renders say which weights they came from.
 
-The engine reproduces `AnyCalib.predict` (`radial:2`) to within 0.016° of ray angle on
-the real test plates.
+The engine and fit reproduce `AnyCalib.predict` with its `simple_division:2` camera (Nuke's
+model, normalised by the focal length) to within 0.007° of ray angle on the test plates.
 
 ## Build
 
@@ -39,8 +42,16 @@ Add `dist/anycalib` to `NUKE_PATH`. The node is under Transform > AnyCalib.
 
 ## Tests
 
+The lens and shot-analysis tests also build without Nuke, Torch, a GPU or downloads:
+
 ```sh
-ctest --test-dir build    # lens maths and fits on synthetic rays, no network
+cmake -S . -B /tmp/anycalib-core -DANYCALIB_BUILD_NUKE=OFF
+cmake --build /tmp/anycalib-core -j
+ctest --test-dir /tmp/anycalib-core --output-on-failure
+```
+
+```sh
+ctest --test-dir build    # lens maths, synthetic fits, shot lifecycle and map disagreement
 # end to end in Nuke: maps against LensDistortion2 and the legacy node, metadata, buttons, persistence
 NUKE_PATH=dist/anycalib nuke --nukex -ti tests/nuke/test_anycalib.py test-assets /tmp/anycalib-test
 # engine and fit against AnyCalib's Python pipeline (test-assets/reference.json)
@@ -48,3 +59,14 @@ NUKE_PATH=dist/anycalib nuke --nukex -ti tests/nuke/test_anycalib.py test-assets
 ```
 
 Test plates and their licences are listed in `test-assets/SOURCES.md`.
+
+`ShotAnalysis` owns bounded frame evidence and enforces one format, unique frames and a
+complete run. It retains at most 100,000 rays over the planned frames. Nuke owns inference,
+fitting and publishing the result. Pending model paths/digests use `analysisModelFile` and
+`analysisModelSha256`; `modelFile` and `modelSha256` describe the last successful result.
+Use the Analyze button (or `anycalib_nuke.analyze`) to prepare the execution plan.
+
+The `frameSpread` knob now measures displacement vectors across the plate, replacing the
+standard deviation of scalar corner-shift magnitudes. Existing scripts keep their saved
+value until analyzed again. `linesInformative` defaults to false for older scripts whose
+saved scale alone cannot distinguish agreement from insufficient line evidence.

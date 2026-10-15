@@ -1,9 +1,8 @@
 // Copyright the anycalib-nuke authors.
 // SPDX-License-Identifier: Apache-2.0
 //
-// NukeLD is Foundry's "NukeX Classic" model;
-// OpenCVRadial is what AnyCalib's `radial` calibrator fits. Pixel coordinates are
-// continuous, with pixel centres at +0.5.
+// Foundry's "NukeX Classic" model. Pixel coordinates are continuous, with pixel centres at
+// +0.5.
 #pragma once
 
 #include <cmath>
@@ -31,16 +30,6 @@ struct NukeLD {
   bool distortRadius(double ru, double& rd) const;
 };
 
-// Image coordinates (y down).
-struct OpenCVRadial {
-  double fx = 0, fy = 0, cx = 0, cy = 0;
-  double k1 = 0, k2 = 0;
-
-  void distort(double xu, double yu, double& xd, double& yd) const;
-  // False when the Newton iteration hasn't converged, as in AnyCalib.
-  bool undistort(double xd, double yd, double& xu, double& yu) const;
-};
-
 struct Extent { double x = 0, y = 0, r = 0, t = 0; };
 
 // Sampled along the whole boundary: LensDistortion2's corners and midpoints miss extremes.
@@ -56,10 +45,5 @@ inline PixelBox AutoBBox(const Extent& e) {
   return {int(std::floor(e.x)) - 3, int(std::floor(e.y)) - 3, int(std::ceil(e.r)) + 3,
           int(std::ceil(e.t)) + 3};
 }
-
-// Least-squares fit of the Nuke model to an OpenCV lens with the same focal length and
-// principal point. `maxErrPx` gets the worst radial disagreement over the plate.
-NukeLD OpenCVToNuke(const OpenCVRadial& cv, int W, int H, double pa = 1.0,
-                    double* maxErrPx = nullptr);
 
 }  // namespace anycalib

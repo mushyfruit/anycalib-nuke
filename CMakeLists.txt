@@ -8,6 +8,25 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
+option(ANYCALIB_BUILD_NUKE "Build the Nuke plugin and libtorch inference CLI" ON)
+
+# Builds and tests without Nuke, Torch or downloads.
+add_library(anycalib_core STATIC src/LensModel.cpp src/CameraFit.cpp src/LineDetect.cpp
+  src/ShotAnalysis.cpp)
+target_include_directories(anycalib_core PUBLIC src)
+set_target_properties(anycalib_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+enable_testing()
+add_executable(test_fit tests/test_fit.cpp)
+target_link_libraries(test_fit PRIVATE anycalib_core)
+add_test(NAME fit COMMAND test_fit)
+add_executable(test_shot tests/test_shot.cpp)
+target_link_libraries(test_shot PRIVATE anycalib_core)
+add_test(NAME shot COMMAND test_shot)
+
+if(NOT ANYCALIB_BUILD_NUKE)
+  return()
+endif()
+
 set(NUKE_ROOT "$ENV{NUKE_ROOT}" CACHE PATH "Nuke install directory")
 if(NOT NUKE_ROOT)
   message(FATAL_ERROR "Set NUKE_ROOT (e.g. -DNUKE_ROOT=$HOME/nuke/Nuke17.0v3)")
@@ -38,11 +57,6 @@ target_link_libraries(nuke_torch INTERFACE
   "${NUKE_ROOT}/libtorch.so" "${NUKE_ROOT}/libtorch_cpu.so" "${NUKE_ROOT}/libc10.so"
   "-Wl,--pop-state")
 
-# The lens maths and line detection, without Nuke or libtorch.
-add_library(anycalib_core STATIC src/LensModel.cpp src/CameraFit.cpp src/LineDetect.cpp)
-target_include_directories(anycalib_core PUBLIC src)
-set_target_properties(anycalib_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
 add_library(anycalib_engine STATIC src/AnyCalibEngine.cpp)
 target_link_libraries(anycalib_engine PUBLIC anycalib_core nuke_torch)
 set_target_properties(anycalib_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -52,11 +66,6 @@ target_link_libraries(AnyCalib PRIVATE anycalib_engine OpenGL::GL)
 target_compile_definitions(AnyCalib PRIVATE ANYCALIB_NUKE_VERSION="${PROJECT_VERSION}")
 # No RPATH: inside Nuke, its own RPATH ($ORIGIN) finds libtorch and the CUDA libraries.
 set_target_properties(AnyCalib PROPERTIES SKIP_BUILD_RPATH ON)
-
-enable_testing()
-add_executable(test_fit tests/test_fit.cpp)
-target_link_libraries(test_fit PRIVATE anycalib_core)
-add_test(NAME fit COMMAND test_fit)
 
 # Outside Nuke the CLI finds its libraries through the build RPATH: DT_RPATH, not RUNPATH,
 # so libtorch's own dependencies see it too.

@@ -72,6 +72,35 @@ check("estimator version + model digest recorded",
 check("maps off by default: plate passes through, bbox unchanged",
       "forward.u" not in ac.channels() and ac.bbox().w() == seq.bbox().w() and ac.bbox().h() == seq.bbox().h())
 
+def analysis_snapshot(node):
+    return {name: node[name].toScript() for name in (
+        "distortion1", "distortion2", "distortionCenter", "rmsDegrees", "frameSpread",
+        "linesAlpha", "linesInformative", "framesAnalysed", "framesInfo", "modelFile",
+        "modelSha256", "estimatorVersion", "linesData", "overscan")}
+
+
+previous = analysis_snapshot(ac)
+ac["analysisFrameCount"].setValue(2)
+ac["analysisModelSha256"].setValue("f" * 64)
+try:
+    nuke.execute(ac, 1, 1, views=[nuke.views()[0]])
+except RuntimeError:
+    pass
+check("incomplete analysis preserves result and provenance", analysis_snapshot(ac) == previous)
+
+ac["analysisFrameCount"].setValue(1)
+ac["analysisModelFile"].setValue(os.path.join(OUT, "nonexistent-model.pt"))
+ac["analysisModelSha256"].setValue("e" * 64)
+try:
+    nuke.execute(ac, 1, 1, views=[nuke.views()[0]])
+except RuntimeError:
+    pass
+check("failed model load preserves result and provenance", analysis_snapshot(ac) == previous)
+ac["analyze"].execute()
+check("analysis recovers after failure", ac["modelSha256"].value() == previous["modelSha256"])
+check("line evidence state is exported", ac.metadata("lens/plumbline_informative") ==
+      int(ac["linesInformative"].value()))
+
 # STMaps against Foundry's LensDistortion nodes
 syn = read(SYN)
 an = nuke.nodes.AnyCalib(inputs=[syn], writeMaps=True)

@@ -1,9 +1,7 @@
 // Copyright the anycalib-nuke authors.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Camera fits to AnyCalib's ray field. The OpenCV fit follows AnyCalib's `radial`
-// calibrator; FitNukeLD fits Foundry's model to the same rays directly instead of
-// converting.
+// Fits Foundry's lens model to AnyCalib's ray field.
 #pragma once
 
 #include <string>
@@ -23,14 +21,10 @@ struct FitStats {
   double rmsDeg = 0;  // RMS angular residual
 };
 
-bool FitOpenCVRadial(const std::vector<RaySample>& s, OpenCVRadial& out, FitStats* stats,
-                     std::string* err);
-
-// Nuke k1, k2, centre and a pinhole focal length (square pixels), initialised from an
-// OpenCV fit. fixCentre keeps the centre at Nuke's (0, 0), the middle of the format.
-bool FitNukeLD(const std::vector<RaySample>& s, int W, int H, double pa, const OpenCVRadial& init,
-               NukeLD& out, double& focalPx, FitStats* stats, std::string* err,
-               bool fixCentre = false);
+// AnyCalib's linear fit of its division camera (Nuke's model up to normalisation), refined
+// on ray angles. focalPx is in square pixels; fixCentre keeps the centre at (0, 0).
+bool FitNukeLD(const std::vector<RaySample>& s, int W, int H, double pa, NukeLD& out,
+               double& focalPx, FitStats* stats, std::string* err, bool fixCentre = false);
 
 // At most `maxN` evenly spaced samples.
 std::vector<RaySample> Thin(const std::vector<RaySample>& s, size_t maxN);

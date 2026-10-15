@@ -51,8 +51,8 @@ def analyze(n):
                      "or install models/anycalib_dist.pt next to the plugin." % path)
         return
     st = os.stat(path)
-    n["modelFile"].setValue(path)
-    n["modelSha256"].setValue(sha256(path, st.st_size, st.st_mtime_ns))
+    n["analysisModelFile"].setValue(path)
+    n["analysisModelSha256"].setValue(sha256(path, st.st_size, st.st_mtime_ns))
 
     if n["useInputRange"].value():
         first, last = int(src.firstFrame()), int(src.lastFrame())
@@ -61,7 +61,11 @@ def analyze(n):
     if last < first:
         first, last = last, first
     step = max(1, math.ceil((last - first + 1) / max(1, int(n["maxFrames"].value()))))
-    nuke.execute(n, first, last, step)
+    n["analysisFrameCount"].setValue(len(range(first, last + 1, step)))
+    # Each view may have a different lens. Never pool stereo views into one estimate.
+    viewer = nuke.activeViewer()
+    view = viewer.view() if viewer is not None else nuke.views()[0]
+    nuke.execute(n, first, last, step, views=[view])
 
 
 def create_lens_distortion(n, undistort):

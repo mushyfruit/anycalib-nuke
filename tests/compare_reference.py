@@ -3,14 +3,8 @@
 of plate pixels. k1/k2 alone trade off against each other and focal, so aren't compared.
 
     python compare_reference.py build/anycalib_cli models/anycalib_dist.pt test-assets [cuda|cpu]
-
-The metric is model-agnostic: the angle between the rays the two calibrations
-assign to the same plate pixels (a 21x21 grid), which is AnyCalib's own residual
-space. Focal and principal point are reported too. k1/k2 alone are not compared:
-for weak distortion they trade off against each other and against focal.
 """
 import json
-import math
 import os
 import subprocess
 import sys
@@ -20,17 +14,13 @@ import numpy as np
 from PIL import Image
 
 
-def unproject(fx, fy, cx, cy, k1, k2, u, v):
-    x0, y0 = (u - cx) / fx, (v - cy) / fy
-    rd = np.hypot(x0, y0)
-    ru = rd.copy()
-    for _ in range(50):
-        r2 = ru * ru
-        f = ru * (1 + k1 * r2 + k2 * r2 * r2) - rd
-        df = np.maximum(1 + 3 * k1 * r2 + 5 * k2 * r2 * r2, 1e-9)
-        ru = np.maximum(ru - f / df, 0)
-    sc = np.where(rd > 1e-12, ru / np.maximum(rd, 1e-12), 1.0)
-    d = np.stack([x0 * sc, y0 * sc, np.ones_like(x0)], -1)
+def rays(f, cx, cy, k1, k2, u, v, s=None):
+    """Unit rays of a division camera: ((u - cx) / s, (v - cy) / s, (f / s) D(r)), with r
+    the radius in units of s (the focal length by default) and D = 1 + k1 r^2 + k2 r^4."""
+    s = f if s is None else s
+    x, y = (u - cx) / s, (v - cy) / s
+    r2 = x * x + y * y
+    d = np.stack([x, y, f / s * (1 + k1 * r2 + k2 * r2 * r2)], -1)
     return d / np.linalg.norm(d, axis=-1, keepdims=True)
 
 
@@ -51,14 +41,14 @@ def main(cli, model, assets, device="cuda"):
         r = ref[name]
         W, H = r["width"], r["height"]
         u, v = np.meshgrid(np.linspace(0.5, W - 0.5, 21), np.linspace(0.5, H - 0.5, 21))
-        a = unproject(r["fx"], r["fy"], r["cx"], r["cy"], r["k1"], r["k2"], u, v)
-        c = o["opencv"]
-        b = unproject(c["fx"], c["fy"], c["cx"], c["cy"], c["k1"], c["k2"], u, v)
+        a = rays(r["f"], r["cx"], r["cy"], r["k1"], r["k2"], u, v)
+        n, S = o["nuke"], 0.5 * max(W, H)
+        cx, cy = 0.5 * W + n["centre"][0] * S, 0.5 * H - n["centre"][1] * S  # Nuke is y up
+        b = rays(n["focal"], cx, cy, n["distortion1"], n["distortion2"], u, v, S)
         ang = np.degrees(np.arccos(np.clip((a * b).sum(-1), -1, 1)))
         worst = max(worst, ang.max())
         print("%-42s %9.1f %9.1f %9.3f %9.3f  (%.1f, %.1f)" % (
-            name, 0.5 * (r["fx"] + r["fy"]), 0.5 * (c["fx"] + c["fy"]), ang.max(), ang.mean(),
-            c["cx"] - r["cx"], c["cy"] - r["cy"]))
+            name, r["f"], n["focal"], ang.max(), ang.mean(), cx - r["cx"], cy - r["cy"]))
     print("\nworst ray-angle difference: %.3f deg" % worst)
 
 
