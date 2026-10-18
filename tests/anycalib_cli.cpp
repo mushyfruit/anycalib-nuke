@@ -1,9 +1,8 @@
 // Copyright the anycalib-nuke authors.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Runs the plugin's engine + fits on PPM or PFM images, outside Nuke.
-//   anycalib_cli <model.pt> <device auto|cpu|cuda> <img.ppm|pfm> [...]
-// Prints one JSON object per image. Used by tests/compare_reference.py.
+// The engine, fit and line refinement outside Nuke, one JSON line per image:
+//   anycalib_cli <model.pt> auto|cpu|cuda [--lock-centre] <img.ppm|pfm> [...]
 #include <cctype>
 #include <chrono>
 #include <cstdio>
@@ -13,6 +12,7 @@
 
 #include "AnyCalibEngine.h"
 #include "CameraFit.h"
+#include "LineDetect.h"
 
 using namespace anycalib;
 
@@ -45,12 +45,14 @@ static bool ReadImage(const std::string& path, int& w, int& h, std::vector<float
 }
 
 static void Print(const char* name, int W, int H, const NukeLD& nk, double focal,
-                  const FitStats& st, double ms) {
+                  const FitStats& st, const LineRefinement& lr, double ms) {
   std::printf(
       "{\"image\": \"%s\", \"width\": %d, \"height\": %d, "
       "\"nuke\": {\"distortion1\": %.6f, \"distortion2\": %.6f, \"centre\": [%.6f, %.6f], \"focal\": %.4f}, "
+      "\"refined\": {\"distortion1\": %.6f, \"distortion2\": %.6f, \"lines\": %d}, "
       "\"rms_deg\": %.4f, \"corner_shift_px\": %.3f, \"ms\": %.1f}\n",
-      name, W, H, nk.k1, nk.k2, nk.cx, nk.cy, focal, st.rmsDeg, CornerShiftPx(nk), ms);
+      name, W, H, nk.k1, nk.k2, nk.cx, nk.cy, focal, lr.lens.k1, lr.lens.k2, lr.lines, st.rmsDeg,
+      CornerShiftPx(nk), ms);
 }
 
 int main(int argc, char** argv) {
@@ -65,7 +67,10 @@ int main(int argc, char** argv) {
   if (!eng) { std::fprintf(stderr, "engine: %s\n", err.c_str()); return 1; }
   std::fprintf(stderr, "device: %s\n", eng->device().c_str());
 
-  for (int i = 3; i < argc; ++i) {
+  int first = 3;
+  const bool lockCentre = argc > 3 && std::string(argv[3]) == "--lock-centre";
+  if (lockCentre) ++first;
+  for (int i = first; i < argc; ++i) {
     int W, H;
     std::vector<float> rgb;
     if (!ReadImage(argv[i], W, H, rgb)) { std::fprintf(stderr, "bad image %s\n", argv[i]); return 1; }
@@ -76,11 +81,18 @@ int main(int argc, char** argv) {
     NukeLD nk;
     double focal;
     FitStats st;
-    if (!FitNukeLD(s, W, H, 1.0, nk, focal, &st, &err)) {
+    if (!FitNukeLD(s, W, H, 1.0, nk, focal, &st, &err, lockCentre)) {
       std::fprintf(stderr, "fit failed: %s\n", err.c_str());
       return 1;
     }
-    Print(argv[i], W, H, nk, focal, st, ms);
+    // Lines on the luminance, as the node finds them.
+    std::vector<float> gray(size_t(W) * H);
+    for (size_t p = 0; p < gray.size(); ++p)
+      gray[p] = 0.2126f * rgb[3 * p] + 0.7152f * rgb[3 * p + 1] + 0.0722f * rgb[3 * p + 2];
+    const std::vector<Segment> segs = DetectSegments(gray.data(), W, H);
+    std::vector<const Segment*> ptrs;
+    for (const Segment& sg : segs) ptrs.push_back(&sg);
+    Print(argv[i], W, H, nk, focal, st, RefineWithLines(ptrs, nk), ms);
   }
   return 0;
 }

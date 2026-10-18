@@ -1,7 +1,9 @@
 # AnyCalib for Nuke
 
-A Nuke 17 node (Linux) that estimates lens distortion from the plate with the
-[AnyCalib](https://github.com/javrtg/AnyCalib) network, and produces what a comp needs:
+A Nuke 17 node (Linux) that estimates lens distortion from the plate. It runs the
+[AnyCalib](https://github.com/javrtg/AnyCalib) network, fine-tuned on renders through Nuke's
+lens model and on real footage, refines the result with straight edges in the plate, and
+produces what a comp needs:
 
 - `distortion1`, `distortion2`, `distortionCenter` in Foundry's NukeX Classic model, the
   values CameraTracker produces and LensDistortion2 takes as `distortionDenominator0/1` and
@@ -32,7 +34,8 @@ The node is under Transform > AnyCalib.
    CameraTracker: white areas (moving objects, burn-ins, letterbox bars) are left out.
    `lock centre` keeps `distortionCenter` at 0.
 3. Press Analyze. It samples up to `max frames` frames evenly over the input range (or a
-   custom one) and pools them into one fit. The lens is assumed fixed over the range.
+   custom one) and pools them into one fit, which `refine with lines` then adjusts so that
+   straight edges in the plate come out straight. The lens is assumed fixed over the range.
    It uses the active viewer's view, or the first project view headlessly. Analyze stereo
    views separately. Format changes, failures and incomplete runs keep the previous result.
 4. Press Create LensDistortion, or turn on `write STMaps` and undistort with an STMap
@@ -40,9 +43,9 @@ The node is under Transform > AnyCalib.
    `overscan` knob.
 5. Check the overlay: lines that should be straight should be green.
 
-CUDA is used when available, otherwise the CPU. On an RTX 3090 a 2048×1536 frame takes about
-50 ms, after about 2 s to load the network; the first two frames take 0.5 s and 1.5 s while
-TorchScript optimises the graph. On the CPU a frame takes about 0.7 s.
+CUDA is used when available, otherwise the CPU. On an RTX 3090 a frame takes about 70 ms,
+after about 2 s to load the network; the first two frames take longer while TorchScript
+optimises the graph. On the CPU a frame takes about 1.4 s.
 
 ### Checks
 
@@ -52,10 +55,12 @@ TorchScript optimises the graph. On the CPU a frame takes about 0.7 s.
 - `frame spread`: the largest standard deviation of undistorted positions on a 9×9 grid
   across the plate, in pixels. This includes displacement direction and centre changes.
   0 for a single frame; it measures consistency, not accuracy against a known lens.
-- `plumb-line scale`: a check that doesn't involve the network. The distortion is scaled by
-  α ∈ [0, 2] to find where the detected lines are straightest. α near 1 agrees with the
-  estimate only when `plumb-line evidence` is on. When that check is off, the lines cannot
-  assess the distortion and the scale defaults to 1.
+- `lines used`: edges that refined the network's estimate. Only long, nearly straight edges
+  away from the centre count, where distortion bends them; lines through the centre don't
+  bend. Below 2 the network's estimate is kept as it is.
+- `line correction`: how far the lines moved the estimate, as the largest change of a plate
+  corner's undistorted position, in pixels. A large correction on a plate full of curved
+  architecture deserves a look; turn off `refine with lines` to compare.
 
 ### Metadata
 
@@ -64,8 +69,8 @@ TorchScript optimises the graph. On the CPU a frame takes about 0.7 s.
 | `lens/model` | `nukex_classic` |
 | `lens/k1`, `lens/k2` | `distortion1`, `distortion2` |
 | `lens/centre`, `lens/centre_px` | `distortionCenter` (normalised, y up), and in pixels |
-| `lens/fit_rms_deg`, `lens/frame_spread_px`, `lens/plumbline_alpha` | see above |
-| `lens/plumbline_informative` | 1 if the lines can assess distortion, otherwise 0 |
+| `lens/fit_rms_deg`, `lens/frame_spread_px` | see above |
+| `lens/lines_used`, `lens/line_correction_px` | see above |
 | `lens/focal_px` | focal length of the fit, in pixels |
 | `lens/frames` | analysed range, e.g. `1001-1100 (24 frames)` |
 | `lens/estimator`, `lens/estimator_version` | `AnyCalib`; plugin and libtorch versions, CUDA or CPU |
@@ -81,8 +86,7 @@ The EXR writer prefixes them with `nuke/` unless *do not attach prefix* is on.
 - Spherical lenses only. Non-square pixels are handled through the format's pixel aspect, but
   anamorphic squeeze isn't estimated.
 - Fisheyes are out of reach. The fit follows them, but undistorting one to a pinhole image
-  moves its corners thousands of pixels. On the GoPro HERO4 plate the plumb-line check flags
-  the result.
+  moves its corners thousands of pixels. On the GoPro HERO4 plate `fit RMS` flags the result.
 - One lens per analysed range: zooms and focus breathing need separate ranges.
 - LensDistortion2 writes (−1, −1) in its undistort map at some off-plate pixels; this node
   only does so where there's no inverse.

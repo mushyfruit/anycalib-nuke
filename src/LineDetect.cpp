@@ -397,34 +397,6 @@ double LineRms(const std::vector<double>& xy) {
   return std::sqrt(std::max(0.0, lmin) / n);
 }
 
-// Straightness (TLS RMS, px) of a plate segment (y down) after undistortion with `m`
-// (Nuke y up; the RMS doesn't depend on which way y points).
-double UndistortedRms(const Segment& s, const NukeLD& m) {
-  const size_t n = s.xy.size() / 2;
-  std::vector<double> und(2 * n);
-  for (size_t i = 0; i < n; ++i)
-    m.undistort(s.xy[2 * i], m.H - s.xy[2 * i + 1], und[2 * i], und[2 * i + 1]);
-  return LineRms(und);
-}
-
-double ChordLength(const Segment& s) {
-  const size_t n = s.xy.size() / 2;
-  return std::hypot(s.xy[2 * n - 2] - s.xy[0], s.xy[2 * n - 1] - s.xy[1]);
-}
-
-const int NA = 21;  // alpha = 0, 0.1, ..., 2
-
-std::vector<double> RmsPerAlpha(const Segment& s, const NukeLD& m) {
-  std::vector<double> r(NA);
-  for (int a = 0; a < NA; ++a) {
-    NukeLD ma = m;
-    ma.k1 = m.k1 * a * 0.1;
-    ma.k2 = m.k2 * a * 0.1;
-    r[a] = UndistortedRms(s, ma);
-  }
-  return r;
-}
-
 // Total-least-squares line through the undistorted points, mapped back into the plate.
 std::vector<double> PredictedLine(const std::vector<double>& und, const NukeLD& m) {
   const size_t n = und.size() / 2;
@@ -446,32 +418,231 @@ std::vector<double> PredictedLine(const std::vector<double>& und, const NukeLD& 
   return line;
 }
 
+// Lengths in px of a 1280-wide plate, the scale the constants were tuned at.
+const double kRefPx = 640;
+const double kMinChord = 150 / kRefPx;  // shorter segments bend too little to read
+const double kMinOffAxis = 0.4;         // segment midpoint from the centre, normalised
+const double kMaxResidual = 2.0;        // px from the segment's line: arcs aren't lines
+const double kMinSensitivity = 0.03;    // px of bow per 0.01 of k1; radial lines barely react
+const double kHuber = 0.3;              // px; larger bows are mostly curved scene edges
+const double kPrior = 0.003;            // weight of the estimate, per px^2 of map change
+
+struct Line {
+  std::vector<double> xy;  // normalised, about the distortion centre
+  double mx, my, ux, uy, len;
+  double residual = 0;  // largest distance of a point from the line
+  double weight = 0;
+};
+
+Line MakeLine(std::vector<double> xy) {
+  Line l;
+  const size_t n = xy.size() / 2;
+  const Scatter sc(xy);
+  const double th = sc.angle();
+  l.mx = sc.mx;
+  l.my = sc.my;
+  l.ux = std::cos(th);
+  l.uy = std::sin(th);
+  l.len = std::hypot(xy[2 * n - 2] - xy[0], xy[2 * n - 1] - xy[1]);
+  for (size_t i = 0; i < n; ++i) {
+    const double d = (xy[2 * i + 1] - l.my) * l.ux - (xy[2 * i] - l.mx) * l.uy;
+    l.residual = std::max(l.residual, std::fabs(d));
+  }
+  l.xy = std::move(xy);
+  return l;
+}
+
+// Signed bow (px) of points about their total-least-squares line, from a parabola across
+// their span; > 0 bulges away from the centre (barrel).
+double Bow(const std::vector<double>& xy) {
+  const size_t n = xy.size() / 2;
+  const Scatter sc(xy);
+  const double th = sc.angle();
+  const double ux = std::cos(th), uy = std::sin(th);
+  const double sn = sc.mx * -uy + sc.my * ux < 0 ? -1 : 1;
+  std::vector<double> t(n), d(n);
+  double t0 = 1e30, t1 = -1e30;
+  for (size_t i = 0; i < n; ++i) {
+    const double dx = xy[2 * i] - sc.mx, dy = xy[2 * i + 1] - sc.my;
+    t[i] = dx * ux + dy * uy;
+    d[i] = sn * (dy * ux - dx * uy);
+    t0 = std::min(t0, t[i]);
+    t1 = std::max(t1, t[i]);
+  }
+  const double mid = 0.5 * (t0 + t1), half = 0.5 * (t1 - t0);
+  if (half <= 0) return 0;
+  // d = a + b u + c u^2 with u in [-1, 1], so the bow at the ends is -c.
+  double S[5] = {0}, B[3] = {0};
+  for (size_t i = 0; i < n; ++i) {
+    const double u = (t[i] - mid) / half;
+    double p = 1;
+    for (int k = 0; k < 5; ++k, p *= u) {
+      S[k] += p;
+      if (k < 3) B[k] += d[i] * p;
+    }
+  }
+  const double det = S[0] * (S[2] * S[4] - S[3] * S[3]) - S[1] * (S[1] * S[4] - S[2] * S[3]) +
+                     S[2] * (S[1] * S[3] - S[2] * S[2]);
+  if (std::fabs(det) < 1e-12) return 0;
+  const double c = (S[0] * (S[2] * B[2] - S[3] * B[1]) - S[1] * (S[1] * B[2] - S[2] * B[1]) +
+                    B[0] * (S[1] * S[3] - S[2] * S[2])) / det;
+  return -c * kRefPx;
+}
+
+// Bow after undistortion, scaled back to the plate by the chord ratio: a bow measured on the
+// undistorted points shrinks with the image, which would favour lenses that shrink it.
+double BowUnder(const Line& l, double k1, double k2) {
+  std::vector<double> u(l.xy.size());
+  for (size_t i = 0; i + 1 < u.size(); i += 2) {
+    const double x = l.xy[i], y = l.xy[i + 1], r2 = x * x + y * y;
+    const double D = 1 + k1 * r2 + k2 * r2 * r2;
+    u[i] = x / D;
+    u[i + 1] = y / D;
+  }
+  const size_t n = u.size();
+  const double chord = std::hypot(u[n - 2] - u[0], u[n - 1] - u[1]);
+  return chord > 0 ? Bow(u) * l.len / chord : 0;
+}
+
+// Bent pieces are halved, as a line-segment detector would, so arcs don't pass as lines.
+void AddPieces(const std::vector<double>& xy, size_t a, size_t b, std::vector<Line>& out) {
+  if (b < a + 5) return;
+  Line l = MakeLine(std::vector<double>(xy.begin() + 2 * a, xy.begin() + 2 * b + 2));
+  if (l.len < kMinChord) return;
+  if (l.residual * kRefPx > kMaxResidual) {
+    const size_t m = a + (b - a + 1) / 2;
+    AddPieces(xy, a, m, out);
+    AddPieces(xy, m, b, out);
+    return;
+  }
+  const double cx = 0.5 * (xy[2 * a] + xy[2 * b]), cy = 0.5 * (xy[2 * a + 1] + xy[2 * b + 1]);
+  if (std::hypot(cx, cy) >= kMinOffAxis) out.push_back(std::move(l));
+}
+
+// Long, off-axis, nearly straight pieces. A line seen twice (both sides of it, several frames)
+// counts once.
+std::vector<Line> CandidateLines(const std::vector<const Segment*>& segs, const NukeLD& m) {
+  std::vector<Line> all;
+  for (const Segment* s : segs) {
+    const size_t n = s->xy.size() / 2;
+    std::vector<double> xy(2 * n);
+    for (size_t i = 0; i < n; ++i) {
+      xy[2 * i] = (s->xy[2 * i] - m.centreX()) * m.pa / m.s();
+      xy[2 * i + 1] = (m.H - s->xy[2 * i + 1] - m.centreY()) / m.s();
+    }
+    if (n) AddPieces(xy, 0, n - 1, all);
+  }
+  std::sort(all.begin(), all.end(), [](const Line& a, const Line& b) { return a.len > b.len; });
+  std::vector<Line> kept;
+  for (Line& l : all) {
+    bool dup = false;
+    for (const Line& k : kept) {
+      const double dx = k.mx - l.mx, dy = k.my - l.my;
+      if (std::fabs(l.ux * k.ux + l.uy * k.uy) > 0.999 &&
+          std::fabs(l.ux * dy - l.uy * dx) < 5 / kRefPx &&
+          std::fabs(dx * l.ux + dy * l.uy) < 0.35 * (l.len + k.len)) {
+        dup = true;
+        break;
+      }
+    }
+    if (!dup) kept.push_back(std::move(l));
+  }
+  return kept;
+}
+
 }  // namespace
 
-PlumbLine PlumbLineScale(const std::vector<const Segment*>& segs, const NukeLD& m) {
-  PlumbLine out;
-  const double minLen = 0.1 * std::max(m.W, m.H);
-  std::vector<std::vector<double>> rms;  // [segment][alpha]
-  for (const Segment* s : segs) {
-    if (s->xy.size() < 6 || ChordLength(*s) < minLen) continue;
-    std::vector<double> r = RmsPerAlpha(*s, m);
-    const double best = *std::min_element(r.begin(), r.end());
-    if (best > 1.0) continue;  // not the image of a straight line under any alpha
-    rms.push_back(std::move(r));
+LineRefinement RefineWithLines(const std::vector<const Segment*>& segs, const NukeLD& m) {
+  LineRefinement out{m, 0};
+  std::vector<Line> lines;
+  for (Line& l : CandidateLines(segs, m)) {
+    const double sens = 5 * std::fabs(BowUnder(l, 0.001, 0) - BowUnder(l, -0.001, 0));
+    if (sens < kMinSensitivity) continue;
+    l.weight = std::min(1.0, sens / 0.3);
+    lines.push_back(std::move(l));
   }
-  if (rms.size() < 4) return out;
-  std::vector<double> e(NA, 0.0);
-  for (const auto& r : rms)
-    for (int a = 0; a < NA; ++a) e[a] += r[a] * r[a] / rms.size();
-  int ia = int(std::min_element(e.begin(), e.end()) - e.begin());
-  double alpha = 0.1 * ia;
-  if (ia > 0 && ia < NA - 1) {  // parabolic refinement
-    double den = e[ia - 1] - 2 * e[ia] + e[ia + 1];
-    if (den > 1e-12) alpha += 0.1 * std::clamp(0.5 * (e[ia - 1] - e[ia + 1]) / den, -0.5, 0.5);
+  out.lines = int(lines.size());
+  if (lines.size() < 2) return out;
+
+  const double p[2] = {m.k1, m.k2};
+  // Prior metric: mean squared change of the undistortion map (px) per change of k, on a
+  // 33 x 21 grid over the plate.
+  double R[3] = {0, 0, 0};  // xx, xy, yy
+  for (int j = 0; j < 21; ++j)
+    for (int i = 0; i < 33; ++i) {
+      const double x = ((0.5 + (m.W - 1.0) * i / 32) - m.centreX()) * m.pa / m.s();
+      const double y = ((0.5 + (m.H - 1.0) * j / 20) - m.centreY()) / m.s();
+      const double r2 = x * x + y * y, D = 1 + p[0] * r2 + p[1] * r2 * r2;
+      for (double c : {x, y}) {
+        const double a = c * r2 / (D * D) * kRefPx, b = a * r2;
+        R[0] += a * a;
+        R[1] += a * b;
+        R[2] += b * b;
+      }
+    }
+  for (double& r : R) r /= 33 * 21;
+
+  // Keep the undistortion defined and monotonic out to the farthest corner.
+  double r2max = 0;
+  for (double X : {0.0, double(m.W)})
+    for (double Y : {0.0, double(m.H)})
+      r2max = std::max(r2max, std::pow((X - m.centreX()) * m.pa / m.s(), 2) +
+                                  std::pow((Y - m.centreY()) / m.s(), 2));
+  auto objective = [&](const double k[2]) -> double {
+    for (int i = 0; i < 30; ++i) {
+      const double r2 = r2max * i / 29;
+      if (1 + k[0] * r2 + k[1] * r2 * r2 < 0.5 || 1 - k[0] * r2 - 3 * k[1] * r2 * r2 < 0.2)
+        return INFINITY;
+    }
+    double e = 0;
+    for (const Line& l : lines) {
+      const double b = std::fabs(BowUnder(l, k[0], k[1]));
+      e += l.weight * (b <= kHuber ? b * b : 2 * kHuber * b - kHuber * kHuber);
+    }
+    const double d0 = k[0] - p[0], d1 = k[1] - p[1];
+    return e + kPrior * (R[0] * d0 * d0 + 2 * R[1] * d0 * d1 + R[2] * d1 * d1);
+  };
+
+  // Gauss-Newton on the Huber-weighted bows, with a backtracking line search.
+  double k[2] = {p[0], p[1]};
+  for (int it = 0; it < 6; ++it) {
+    double A[3] = {kPrior * R[0], kPrior * R[1], kPrior * R[2]};
+    const double d0 = k[0] - p[0], d1 = k[1] - p[1];
+    double g[2] = {kPrior * (R[0] * d0 + R[1] * d1), kPrior * (R[1] * d0 + R[2] * d1)};
+    const double h = 1e-4;
+    for (const Line& l : lines) {
+      const double b = BowUnder(l, k[0], k[1]);
+      const double j0 = (BowUnder(l, k[0] + h, k[1]) - BowUnder(l, k[0] - h, k[1])) / (2 * h);
+      const double j1 = (BowUnder(l, k[0], k[1] + h) - BowUnder(l, k[0], k[1] - h)) / (2 * h);
+      const double w = l.weight * std::min(1.0, kHuber / std::max(std::fabs(b), 1e-8));
+      A[0] += w * j0 * j0;
+      A[1] += w * j0 * j1;
+      A[2] += w * j1 * j1;
+      g[0] += w * j0 * b;
+      g[1] += w * j1 * b;
+    }
+    A[0] += 1e-8;
+    A[2] += 1e-8;
+    const double det = A[0] * A[2] - A[1] * A[1];
+    double step[2] = {-(A[2] * g[0] - A[1] * g[1]) / det, -(A[0] * g[1] - A[1] * g[0]) / det};
+    const double big = std::max(std::fabs(step[0]), std::fabs(step[1]));
+    if (big > 0.05) { step[0] *= 0.05 / big; step[1] *= 0.05 / big; }
+    const double e0 = objective(k);
+    double next[2];
+    bool moved = false;
+    for (double sc = 1; sc > 0.06; sc *= 0.5) {
+      next[0] = k[0] + sc * step[0];
+      next[1] = k[1] + sc * step[1];
+      if (objective(next) < e0) { moved = true; break; }
+    }
+    if (!moved) break;
+    const double dk = std::hypot(next[0] - k[0], next[1] - k[1]);
+    k[0] = next[0];
+    k[1] = next[1];
+    if (dk < 1e-6) break;
   }
-  out.alpha = alpha;
-  // Mean-square straightness gained vs the worse of alpha 0 / 1, in px^2.
-  out.informative = std::max(e[0], e[10]) - e[ia] > 0.02;
+  out.lens.k1 = k[0];
+  out.lens.k2 = k[1];
   return out;
 }
 

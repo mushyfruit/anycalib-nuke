@@ -12,9 +12,8 @@ namespace anycalib {
 
 namespace {
 
-// AnyCalib.predict's input: aspect ratio (H/W) clamped to [0.5, 2], about `pixels` px (the
-// model's budget, 102400 for stock AnyCalib), sides rounded to multiples of the 14 px ViT patch (std::lround differs from Python's round()
-// only at exact halves), taken from a centre crop of the plate at that aspect ratio.
+// AnyCalib.predict's input: a centre crop at H/W clamped to [0.5, 2], sized to about
+// `pixels` px in multiples of the 14 px patch.
 struct Input {
   int w, h;           // network input
   int x0, y0, cw, ch;  // crop window in the plate

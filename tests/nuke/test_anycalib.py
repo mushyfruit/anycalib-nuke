@@ -64,8 +64,9 @@ ac["analyze"].execute()
 check("analysis ran over the range", int(ac["framesAnalysed"].value()) == len(plates),
       "framesAnalysed=%d framesInfo=%r" % (ac["framesAnalysed"].value(), ac["framesInfo"].value()))
 check("checks recorded", ac["rmsDegrees"].value() > 0 and ac["frameSpread"].value() > 0,
-      "fit RMS %.3f deg, frame spread %.2f px, plumb-line scale %.2f" % (
-          ac["rmsDegrees"].value(), ac["frameSpread"].value(), ac["linesAlpha"].value()))
+      "fit RMS %.3f deg, frame spread %.2f px, %d lines, line correction %.2f px" % (
+          ac["rmsDegrees"].value(), ac["frameSpread"].value(), ac["linesUsed"].value(),
+          ac["lineCorrection"].value()))
 check("estimator version + model digest recorded",
       ac["estimatorVersion"].value().startswith("anycalib-nuke/") and len(ac["modelSha256"].value()) == 64,
       ac["estimatorVersion"].value())
@@ -75,7 +76,7 @@ check("maps off by default: plate passes through, bbox unchanged",
 def analysis_snapshot(node):
     return {name: node[name].toScript() for name in (
         "distortion1", "distortion2", "distortionCenter", "rmsDegrees", "frameSpread",
-        "linesAlpha", "linesInformative", "framesAnalysed", "framesInfo", "modelFile",
+        "linesUsed", "lineCorrection", "framesAnalysed", "framesInfo", "modelFile",
         "modelSha256", "estimatorVersion", "linesData", "overscan")}
 
 
@@ -98,8 +99,8 @@ except RuntimeError:
 check("failed model load preserves result and provenance", analysis_snapshot(ac) == previous)
 ac["analyze"].execute()
 check("analysis recovers after failure", ac["modelSha256"].value() == previous["modelSha256"])
-check("line evidence state is exported", ac.metadata("lens/plumbline_informative") ==
-      int(ac["linesInformative"].value()))
+check("line refinement is exported", ac.metadata("lens/lines_used") == int(ac["linesUsed"].value()) and
+      abs(ac.metadata("lens/line_correction_px") - ac["lineCorrection"].value()) < 1e-9)
 
 # STMaps against Foundry's LensDistortion nodes
 syn = read(SYN)
@@ -108,8 +109,8 @@ an["analyze"].execute()
 W, H = syn.format().width(), syn.format().height()
 d1, d2 = an["distortion1"].value(), an["distortion2"].value()
 cx, cy = an["distortionCenter"].value(0), an["distortionCenter"].value(1)
-print("synthetic: d1=%.5f d2=%.5f centre=(%.5f, %.5f) alpha=%.2f overscan=%s" % (
-    d1, d2, cx, cy, an["linesAlpha"].value(),
+print("synthetic: d1=%.5f d2=%.5f centre=(%.5f, %.5f) lines=%d overscan=%s" % (
+    d1, d2, cx, cy, an["linesUsed"].value(),
     [round(an["overscan"].value(i), 1) for i in range(4)]))
 check("forward/backward channels present",
       all(c in an.channels() for c in ("forward.u", "forward.v", "backward.u", "backward.v")))
@@ -309,6 +310,15 @@ check("lock centre: centre stays at 0, same lens",
       lc["distortionCenter"].value(0) == 0 and lc["distortionCenter"].value(1) == 0
       and abs(lc["distortion1"].value() - k_free) < 2e-3,
       "%.6f vs %.6f" % (lc["distortion1"].value(), k_free))
+
+nr = nuke.nodes.AnyCalib(inputs=[syn], refineLines=False, writeMaps=True)
+nr["analyze"].execute()
+moved, _ = max_err(free, "backward", nr, "backward", [(x, y) for x in (0.5, W - 0.5) for y in (0.5, H - 0.5)])
+check("refine with lines off: no lines used, the correction is the difference",
+      nr["linesUsed"].value() == 0 and nr["lineCorrection"].value() == 0 and free["linesUsed"].value() >= 2
+      and abs(moved - free["lineCorrection"].value()) < 0.5 * free["lineCorrection"].value() + 0.1,
+      "%d lines, correction %.2f px, corners move %.2f px" % (
+          free["linesUsed"].value(), free["lineCorrection"].value(), moved))
 
 bars = nuke.nodes.Rectangle()
 bars["area"].setValue([0, 0, W, int(0.12 * H)])

@@ -1,8 +1,5 @@
 // Copyright the anycalib-nuke authors.
 // SPDX-License-Identifier: Apache-2.0
-//
-// Network-free tests of the lens maths and the camera fits: rays are
-// synthesised from known cameras, so the fits must recover them exactly.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -13,6 +10,7 @@
 
 #include "CameraFit.h"
 #include "LensModel.h"
+#include "LineDetect.h"
 
 using namespace anycalib;
 
@@ -130,6 +128,47 @@ int main() {
               std::fabs(f - c.f) < 0.1 && shiftErr < 0.05,
           F("k1 %.6f (gt %.3f) f %.3f", fit.k1, gt.k1, f) + F(" centre %.6f %.6f", fit.cx, fit.cy) +
               (ok ? "" : " err=" + err) + F(" (s=%.0f)", S));
+  }
+
+  // Line refinement. Lines through the centre don't bend, so they change nothing.
+  {
+    NukeLD gt;
+    gt.W = 1920; gt.H = 1080; gt.k1 = -0.05; gt.k2 = 0.005; gt.cx = 0.01; gt.cy = -0.02;
+    auto line = [&](double x0, double y0, double x1, double y1) {  // undistorted, Nuke y up
+      Segment s;
+      for (int i = 0; i < 24; ++i) {
+        double xd, yd;
+        gt.distort(x0 + (x1 - x0) * i / 23, y0 + (y1 - y0) * i / 23, xd, yd);
+        s.xy.push_back(float(xd));
+        s.xy.push_back(float(gt.H - yd));
+      }
+      return s;
+    };
+    std::vector<Segment> grid, radial;
+    for (double f : {0.1, 0.9}) grid.push_back(line(0.1 * gt.W, f * gt.H, 0.9 * gt.W, f * gt.H));
+    for (double f : {0.08, 0.92}) grid.push_back(line(f * gt.W, 0.1 * gt.H, f * gt.W, 0.9 * gt.H));
+    const double cx = gt.centreX(), cy = gt.centreY();
+    for (double a : {0.3, 1.2, 2.0, 2.8})
+      radial.push_back(line(cx + 300 * std::cos(a), cy + 300 * std::sin(a), cx + 520 * std::cos(a),
+                            cy + 520 * std::sin(a)));
+    auto ptrs = [](const std::vector<Segment>& v) {
+      std::vector<const Segment*> p;
+      for (const Segment& s : v) p.push_back(&s);
+      return p;
+    };
+    NukeLD weak = gt;
+    weak.k1 = -0.02;
+    weak.k2 = 0;
+    const LineRefinement r = RefineWithLines(ptrs(grid), weak);
+    const double before = std::fabs(CornerShiftPx(weak) - CornerShiftPx(gt));
+    const double after = std::fabs(CornerShiftPx(r.lens) - CornerShiftPx(gt));
+    Check("lines correct an estimate that reads too little barrel", r.lines >= 2 && after < 0.2 * before,
+          F("%.0f lines, corner shift error %.2f -> %.2f px", r.lines, before, after));
+    NukeLD none = gt;
+    none.k1 = none.k2 = 0;
+    const LineRefinement rr = RefineWithLines(ptrs(radial), none);
+    Check("radial lines leave the estimate alone", rr.lines == 0 && rr.lens.k1 == 0 && rr.lens.k2 == 0,
+          F("%.0f lines", rr.lines));
   }
 
   std::printf("\n%s\n", failures ? "FAILED" : "all passed");

@@ -2,9 +2,6 @@
 
 Commands are run from the repo root.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the analysis boundaries and the proposed
-calibration and training experiments.
-
 ## Network
 
 The network is exported to TorchScript from AnyCalib's PyTorch weights, with torch 2.7.1 to
@@ -18,7 +15,9 @@ uv pip install --python .venv/bin/python --index-strategy unsafe-best-match -r t
 ```
 
 For fine-tuned weights, add `--weights checkpoint.tar` (an AnyCalib training checkpoint, a
-state_dict or `.safetensors`). The node looks for the network in `model override` (Advanced
+state_dict or `.safetensors`). The shipped network is a LoRA fine-tune merged into AnyCalib's
+weights and exported with `--resolution 204800`, the input size it was trained at; the engine
+reads that size from the file. The node looks for the network in `model override` (Advanced
 tab), then `$ANYCALIB_MODEL_PATH`, then `models/anycalib_dist.pt` next to the plugin. The
 file's SHA-256 goes into the metadata, so renders say which weights they came from.
 
@@ -51,22 +50,22 @@ ctest --test-dir /tmp/anycalib-core --output-on-failure
 ```
 
 ```sh
-ctest --test-dir build    # lens maths, synthetic fits, shot lifecycle and map disagreement
+ctest --test-dir build    # lens maths, fits, line refinement, frame pooling
 # end to end in Nuke: maps against LensDistortion2 and the legacy node, metadata, buttons, persistence
 NUKE_PATH=dist/anycalib nuke --nukex -ti tests/nuke/test_anycalib.py test-assets /tmp/anycalib-test
-# engine and fit against AnyCalib's Python pipeline (test-assets/reference.json)
+# engine and fit against AnyCalib's Python pipeline (test-assets/reference.json); needs the
+# stock network, exported without --weights
 .venv/bin/python tests/compare_reference.py build/anycalib_cli models/anycalib_dist.pt test-assets cuda
 ```
 
 Test plates and their licences are listed in `test-assets/SOURCES.md`.
 
-`ShotAnalysis` owns bounded frame evidence and enforces one format, unique frames and a
-complete run. It retains at most 100,000 rays over the planned frames. Nuke owns inference,
-fitting and publishing the result. Pending model paths/digests use `analysisModelFile` and
-`analysisModelSha256`; `modelFile` and `modelSha256` describe the last successful result.
-Use the Analyze button (or `anycalib_nuke.analyze`) to prepare the execution plan.
+## Layout
 
-The `frameSpread` knob now measures displacement vectors across the plate, replacing the
-standard deviation of scalar corner-shift magnitudes. Existing scripts keep their saved
-value until analyzed again. `linesInformative` defaults to false for older scripts whose
-saved scale alone cannot distinguish agreement from insufficient line evidence.
+- `src/AnyCalibEngine`: the network's input crop and resize, inference, rays back to plate pixels.
+- `src/CameraFit`, `src/LensModel`: the fit and Nuke's lens model.
+- `src/LineDetect`: edges for the overlay and the line refinement.
+- `src/ShotAnalysis`: pools frames into one fit, keeping at most 100,000 rays. A failed or
+  incomplete run keeps the previous result: `analysisModelFile` and `analysisModelSha256` hold
+  the pending network, `modelFile` and `modelSha256` the one behind the current result.
+- `src/AnyCalibNuke.cpp`: the node. `python/anycalib_nuke.py`: its buttons.

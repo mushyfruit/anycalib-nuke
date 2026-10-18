@@ -107,7 +107,7 @@ struct Accumulator {
   ShotAnalysis shot;
   std::string device, digest, model;
   Device requestedDevice = Device::Auto;
-  bool lockCentre = false;
+  bool lockCentre = false, refineLines = true;
 };
 
 // The 90th percentile of up to ~1M unmasked pixels exposed to 0.8, as AnyCalib's training
@@ -125,6 +125,18 @@ void ExposeToSrgb(std::vector<float>& img, const std::vector<uint8_t>& excluded)
     k = 0.8f / (*p90 + 1e-10f);
   }
   for (float& v : img) v = SrgbOetf(k * v);
+}
+
+// Largest distance (px) between a plate corner's undistorted positions under two lenses.
+double CornerChange(const NukeLD& a, const NukeLD& b) {
+  double d = 0;
+  for (double x : {0.0, double(a.W)})
+    for (double y : {0.0, double(a.H)}) {
+      double ax, ay, bx, by;
+      if (a.undistort(x, y, ax, ay) && b.undistort(x, y, bx, by))
+        d = std::max(d, std::hypot(ax - bx, ay - by));
+    }
+  return d;
 }
 
 void DropExcluded(std::vector<RaySample>& samples, const std::vector<uint8_t>& excluded, int W,
@@ -225,13 +237,14 @@ class AnyCalibOp : public Iop, public Executable {
   int _maxFrames = 24;
   int _ignore = kNoMask;
   bool _lockCentre = false;
+  bool _refineLines = true;
   double _k1 = 0, _k2 = 0;
   double _centre[2] = {0, 0};
   double _focal = 0;
   double _rmsDeg = 0;
   double _frameSpread = 0;
-  double _linesAlpha = 1;
-  bool _linesInformative = false;
+  int _linesUsed = 0;
+  double _lineCorrection = 0;
   int _framesAnalysed = 0;
   const char* _framesInfo = nullptr;
   const char* _estimatorVersion = nullptr;
@@ -338,6 +351,11 @@ void AnyCalibOp::knobs(Knob_Callback f) {
   SetFlags(f, Knob::STARTLINE | Knob::NO_RERENDER);
   Tooltip(f, "Keep distortion center at 0, the middle of the format, and fit only distortion 1 "
              "and 2. Steadier when the distortion is mild.");
+  Bool_knob(f, &_refineLines, "refineLines", "refine with lines");
+  SetFlags(f, Knob::NO_RERENDER);
+  Tooltip(f, "Adjust distortion 1 and 2 so that long straight edges in the plate come out "
+             "straight, staying close to the network's estimate. Without two usable edges the "
+             "network's estimate is kept.");
   PyScript_knob(f, kAnalyzeScript, "analyze", "Analyze");
   SetFlags(f, Knob::STARTLINE);
 
@@ -368,16 +386,15 @@ void AnyCalibOp::knobs(Knob_Callback f) {
   ClearFlags(f, Knob::SLIDER);
   Tooltip(f, "Largest standard deviation of undistorted positions on a grid across the plate. "
              "Includes displacement direction and centre changes. 0 with one frame.");
-  Double_knob(f, &_linesAlpha, "linesAlpha", "plumb-line scale");
+  Int_knob(f, &_linesUsed, "linesUsed", "lines used");
+  SetFlags(f, resultFlags);
+  Tooltip(f, "Edges that refined the estimate: long, nearly straight and away from the centre, "
+             "where distortion bends them. Below 2, the network's estimate is used as it is.");
+  Double_knob(f, &_lineCorrection, "lineCorrection", "line correction (px)");
   SetFlags(f, resultFlags);
   ClearFlags(f, Knob::SLIDER);
-  Tooltip(f, "Scale of the estimate at which the detected lines are straightest. 1 agrees "
-             "with the estimate, 0 means they're straight in the plate already. Only meaningful "
-             "when 'plumb-line evidence' is on.");
-  Bool_knob(f, &_linesInformative, "linesInformative", "plumb-line evidence");
-  SetFlags(f, resultFlags);
-  Tooltip(f, "Off means the detected lines cannot assess this distortion. A scale of 1 then "
-             "does not corroborate the estimate.");
+  Tooltip(f, "How far the lines moved the network's estimate: the largest change of a plate "
+             "corner's undistorted position.");
 
   Divider(f, "Output");
   Bool_knob(f, &_writeMaps, "writeMaps", "write STMaps (forward.u/v undistort, backward.u/v redistort)");
@@ -525,8 +542,8 @@ const MetaData::Bundle& AnyCalibOp::_fetchMetaData(const char* key) {
     _meta.setData("lens/focal_px", _focal);
     _meta.setData("lens/fit_rms_deg", _rmsDeg);
     _meta.setData("lens/frame_spread_px", _frameSpread);
-    _meta.setData("lens/plumbline_alpha", _linesAlpha);
-    _meta.setData("lens/plumbline_informative", int(_linesInformative));
+    _meta.setData("lens/lines_used", _linesUsed);
+    _meta.setData("lens/line_correction_px", _lineCorrection);
     _meta.setData("lens/frames", _framesInfo ? _framesInfo : "");
     _meta.setData("lens/estimator", "AnyCalib");
     _meta.setData("lens/estimator_version", _estimatorVersion ? _estimatorVersion : "");
@@ -545,6 +562,7 @@ void AnyCalibOp::beginExecuting() {
   a.digest = _analysisDigest ? _analysisDigest : "";
   a.requestedDevice = kDevices[_device];
   a.lockCentre = _lockCentre;
+  a.refineLines = _refineLines;
   if (a.model.empty()) a.shot.fail("run the analysis with the Analyze button");
 }
 
@@ -626,8 +644,13 @@ void AnyCalibOp::endExecuting() {
     error("AnyCalib: a per-frame lens is undefined on the plate; previous result kept");
     return;
   }
-  const PlumbLine pl = PlumbLineScale(AllSegments(frames), nk);
-  if (aborted()) return;
+  const NukeLD network = nk;
+  int lines = 0;
+  if (a.refineLines) {
+    const LineRefinement lr = RefineWithLines(AllSegments(frames), nk);
+    nk = lr.lens;
+    lines = lr.lines;
+  }
 
   setKnob("distortion1", nk.k1);
   setKnob("distortion2", nk.k2);
@@ -636,8 +659,8 @@ void AnyCalibOp::endExecuting() {
   setKnob("focalPx", focal);
   setKnob("rmsDegrees", st.rmsDeg);
   setKnob("frameSpread", spread);
-  setKnob("linesAlpha", pl.informative ? pl.alpha : 1.0);
-  setKnob("linesInformative", pl.informative);
+  setKnob("linesUsed", lines);
+  setKnob("lineCorrection", CornerChange(network, nk));
   setText("modelFile", a.model);
   setText("modelSha256", a.digest);
   setKnob("framesAnalysed", double(nF));
