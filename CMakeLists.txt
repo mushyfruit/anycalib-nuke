@@ -7,6 +7,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
+if(WIN32)
+  # As add_nuke_plugin sets for the plugin, for every target.
+  add_compile_definitions(NOMINMAX _USE_MATH_DEFINES)
+endif()
 
 option(ANYCALIB_BUILD_NUKE "Build the Nuke plugin and libtorch inference CLI" ON)
 
@@ -38,7 +42,9 @@ find_package(OpenGL REQUIRED)
 # Only the headers come from the official release; everything links Nuke's libraries.
 # -DLIBTORCH_ROOT=<extracted libtorch 2.7.1> skips the download.
 set(LIBTORCH_ROOT "" CACHE PATH "Extracted libtorch 2.7.1 release (optional)")
-if(NOT LIBTORCH_ROOT)
+if(WIN32 AND NOT LIBTORCH_ROOT)
+  message(FATAL_ERROR "Set LIBTORCH_ROOT to an extracted libtorch 2.7.1+cu128 Windows release")
+elseif(NOT LIBTORCH_ROOT)
   include(FetchContent)
   FetchContent_Declare(libtorch
     URL "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.7.1%2Bcpu.zip"
@@ -51,11 +57,20 @@ endif()
 add_library(nuke_torch INTERFACE)
 target_include_directories(nuke_torch SYSTEM INTERFACE
   "${LIBTORCH_ROOT}/include" "${LIBTORCH_ROOT}/include/torch/csrc/api/include")
-# libtorch.so only pulls in libtorch_cuda.so, so keep it even though nothing calls into it.
-target_link_libraries(nuke_torch INTERFACE
-  "-Wl,--push-state,--no-as-needed"
-  "${NUKE_ROOT}/libtorch.so" "${NUKE_ROOT}/libtorch_cpu.so" "${NUKE_ROOT}/libc10.so"
-  "-Wl,--pop-state")
+if(WIN32)
+  # Nuke ships the DLLs but not their import libraries; the release's (cu128) name the same
+  # DLLs. Nothing calls into torch_cuda.dll, so pull in a symbol to keep it loaded.
+  target_link_libraries(nuke_torch INTERFACE
+    "${LIBTORCH_ROOT}/lib/torch.lib" "${LIBTORCH_ROOT}/lib/torch_cpu.lib"
+    "${LIBTORCH_ROOT}/lib/torch_cuda.lib" "${LIBTORCH_ROOT}/lib/c10.lib")
+  target_link_options(nuke_torch INTERFACE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+else()
+  # libtorch.so only pulls in libtorch_cuda.so, so keep it even though nothing calls into it.
+  target_link_libraries(nuke_torch INTERFACE
+    "-Wl,--push-state,--no-as-needed"
+    "${NUKE_ROOT}/libtorch.so" "${NUKE_ROOT}/libtorch_cpu.so" "${NUKE_ROOT}/libc10.so"
+    "-Wl,--pop-state")
+endif()
 
 add_library(anycalib_engine STATIC src/AnyCalibEngine.cpp)
 target_link_libraries(anycalib_engine PUBLIC anycalib_core nuke_torch)
@@ -64,6 +79,11 @@ set_target_properties(anycalib_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_nuke_plugin(AnyCalib src/AnyCalibNuke.cpp)
 target_link_libraries(AnyCalib PRIVATE anycalib_engine OpenGL::GL)
 target_compile_definitions(AnyCalib PRIVATE ANYCALIB_NUKE_VERSION="${PROJECT_VERSION}")
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  # Nuke's headers set up their Windows export macros only for MSVC (Build/fnBuild.h skips
+  # fnWindows.h under clang), so clang-cl includes that setup itself.
+  target_compile_options(AnyCalib PRIVATE "/FIBuild/OS/fnWindows.h")
+endif()
 # No RPATH: inside Nuke, its own RPATH ($ORIGIN) finds libtorch and the CUDA libraries.
 set_target_properties(AnyCalib PROPERTIES SKIP_BUILD_RPATH ON)
 
@@ -71,7 +91,9 @@ set_target_properties(AnyCalib PROPERTIES SKIP_BUILD_RPATH ON)
 # so libtorch's own dependencies see it too.
 add_executable(anycalib_cli tests/anycalib_cli.cpp)
 target_link_libraries(anycalib_cli PRIVATE anycalib_engine)
-target_link_options(anycalib_cli PRIVATE "LINKER:--disable-new-dtags")
+if(NOT WIN32)
+  target_link_options(anycalib_cli PRIVATE "LINKER:--disable-new-dtags")
+endif()
 
 # <prefix>/anycalib/{AnyCalib.so, menu.py, anycalib_nuke.py, models/}: add that folder to NUKE_PATH.
 set(ANYCALIB_MODEL_FILE "" CACHE FILEPATH "TorchScript network to bundle (optional)")

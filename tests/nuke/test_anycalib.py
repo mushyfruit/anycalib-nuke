@@ -25,8 +25,13 @@ def check(name, ok, detail=""):
     print("%s  %s  %s" % ("PASS" if ok else "FAIL", name, detail), flush=True)
 
 
+def file_path(path):
+    """A path for a file knob: Nuke reads backslashes as escapes."""
+    return path.replace("\\", "/")
+
+
 def read(path, first=1, last=1):
-    r = nuke.nodes.Read(file=path, first=first, last=last, origfirst=first, origlast=last)
+    r = nuke.nodes.Read(file=file_path(path), first=first, last=last, origfirst=first, origlast=last)
     r["on_error"].setValue("black")
     return r
 
@@ -254,11 +259,11 @@ want = ["lens/k1", "lens/k2", "lens/centre", "lens/model", "lens/model_sha256", 
 check("lens metadata on the stream", all(k in md for k in want),
       json.dumps({k: md.get(k) for k in want}, default=str)[:300])
 exr = os.path.join(OUT, "meta.exr")
-w = nuke.nodes.Write(inputs=[an], file=exr, file_type="exr")
+w = nuke.nodes.Write(inputs=[an], file=file_path(exr), file_type="exr")
 w["metadata"].setValue("all metadata")
 w["channels"].setValue("all")
 nuke.execute(w, 1, 1)
-rb = nuke.nodes.Read(file=exr)
+rb = nuke.nodes.Read(file=file_path(exr))
 rmd = rb.metadata()
 lens_keys = sorted(k for k in rmd if "lens/" in k)
 check("lens metadata in the EXR header", any(k.endswith("lens/k1") for k in lens_keys) and

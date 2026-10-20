@@ -1,9 +1,10 @@
 # AnyCalib for Nuke
 
-A Nuke 17 node (17.0 and 17.1, Linux) that estimates lens distortion from the plate, with no grid or camera move. It
-runs [AnyCalib](https://github.com/javrtg/AnyCalib), fine-tuned on real footage and on renders
-through Nuke's lens model, then refines the estimate so that straight edges in the plate come
-out straight. [Write-up](https://www.andrewboyles.com/thoughts/anycalib-nuke).
+A Nuke 17 node (17.0 and 17.1, Linux and Windows) that estimates lens distortion from the
+plate, with no grid or camera move. It runs [AnyCalib](https://github.com/javrtg/AnyCalib),
+fine-tuned on real footage and on renders through Nuke's lens model, then refines the estimate
+so that straight edges in the plate come out straight.
+[Write-up](https://www.andrewboyles.com/thoughts/anycalib-nuke).
 
 ![A barrel-distorted plate wiping to the node's undistortion; the edges it used turn from red to green](docs/images/wipe.gif)
 
@@ -20,8 +21,8 @@ It produces:
 
 ## Install
 
-Needs Nuke 17.0 or 17.1 on Linux. Unpack the plugin for your Nuke version from the
-[release](../../releases) and download the network from
+Needs Nuke 17.0 or 17.1 on Linux or Windows. Unpack the plugin for your Nuke version and OS
+from the [release](../../releases) and download the network from
 [Hugging Face](https://huggingface.co/mushyfruit/anycalib-nuke) into its `models` folder:
 
 ```sh
@@ -30,7 +31,15 @@ curl -L -o anycalib/models/anycalib_dist.pt \
     https://huggingface.co/mushyfruit/anycalib-nuke/resolve/main/anycalib_dist.pt
 ```
 
-Then add the `anycalib` folder to Nuke's plugin path, for example in `~/.nuke/init.py`:
+On Windows, in PowerShell:
+
+```powershell
+Expand-Archive anycalib-nuke-*-nuke17.1-windows-plugin.zip .   # or nuke17.0
+curl.exe -L -o anycalib\models\anycalib_dist.pt https://huggingface.co/mushyfruit/anycalib-nuke/resolve/main/anycalib_dist.pt
+```
+
+Then add the `anycalib` folder to Nuke's plugin path, for example in `~/.nuke/init.py` (forward
+slashes on Windows too):
 
 ```python
 nuke.pluginAddPath('/path/to/anycalib')
@@ -55,7 +64,7 @@ Analyze uses the active viewer's view, or the first view headlessly, so analyse 
 separately. A failed or cancelled run keeps the previous result.
 
 On an RTX 3090 a frame takes about 70 ms, after 2 s to load the network. On the CPU it takes
-about 1.4 s.
+about 1.4 s. On Windows an analysis takes roughly twice as long.
 
 ### Checks
 

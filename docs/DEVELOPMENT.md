@@ -28,7 +28,10 @@ model, normalised by the focal length) to within 0.007° of ray angle on the tes
 
 Needs Nuke 17, CMake 3.20+ and a C++17 compiler. The network runs on the libtorch Nuke ships
 (PyTorch 2.7.1), so nothing is bundled. CMake downloads the libtorch 2.7.1 headers, or takes an
-extracted release with `-DLIBTORCH_ROOT=...`.
+extracted release with `-DLIBTORCH_ROOT=...`. On Windows, `LIBTORCH_ROOT` must be the
+2.7.1+cu128 Windows release: Nuke ships the torch DLLs but not their import libraries. The
+plugin has to be built against an MSVC runtime no newer than the `msvcp140.dll` the Nuke
+version ships (14.36 for 17.0, 14.44 for 17.1).
 
 ```sh
 cmake -S . -B build -DNUKE_ROOT=$HOME/nuke/Nuke17.0v3 -DCMAKE_INSTALL_PREFIX=$PWD/dist \
