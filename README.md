@@ -16,15 +16,15 @@ produces what a comp needs:
 
 ## Install
 
-Needs Nuke 17 on Linux. Build the plugin as described in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md),
-which gives an `anycalib` folder holding the plugin and the network. Add that folder to Nuke's
-plugin path, for example in `~/.nuke/init.py`:
+Needs Nuke 17 on Linux. Unpack the [release](../../releases) and add its `anycalib` folder,
+which holds the plugin and the network, to Nuke's plugin path, for example in `~/.nuke/init.py`:
 
 ```python
 nuke.pluginAddPath('/path/to/anycalib')
 ```
 
-The node is under Transform > AnyCalib.
+The node is under Transform > AnyCalib. To build it yourself, see
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Use
 

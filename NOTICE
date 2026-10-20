@@ -6,7 +6,8 @@ This project depends on the following works.
 * AnyCalib, Javier Tirado-Garín and Javier Civera, github.com/javrtg/AnyCalib.
   Licensed under the Apache License, Version 2.0. The network weights are
   downloaded and exported by tools/export_anycalib.py; they are not part of
-  this repository.
+  this repository. The network in the release, models/anycalib_dist.pt, is
+  AnyCalib's anycalib_dist weights fine-tuned for this project.
 
 * PyTorch (libtorch), BSD-3-Clause License. Its headers are fetched at build
   time; the plugin runs on the libtorch libraries Nuke ships and bundles none.

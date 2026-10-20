@@ -1,5 +1,6 @@
 # build + fetched dependencies
 build/
+dist/
 .venv/
 __pycache__/
 
