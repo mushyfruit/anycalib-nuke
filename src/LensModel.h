@@ -26,7 +26,6 @@ struct NukeLD {
   bool undistort(double xd, double yd, double& xu, double& yu) const;
   // False beyond the invertible range, where the result is clamped.
   bool distort(double xu, double yu, double& xd, double& yd) const;
-  bool undistortRadius(double rd, double& ru) const;
   bool distortRadius(double ru, double& rd) const;
 };
 

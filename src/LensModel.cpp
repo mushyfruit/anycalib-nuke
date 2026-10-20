@@ -77,13 +77,6 @@ bool NukeLD::distort(double xu, double yu, double& xd, double& yd) const {
   return ok;
 }
 
-bool NukeLD::undistortRadius(double rd, double& ru) const {
-  const double D = Denominator(*this, rd);
-  if (!(D > 0)) { ru = rd; return false; }
-  ru = rd / D;
-  return true;
-}
-
 bool NukeLD::distortRadius(double ru, double& rd) const {
   if (ru <= 0) { rd = 0; return true; }
   if (isIdentity()) { rd = ru; return true; }

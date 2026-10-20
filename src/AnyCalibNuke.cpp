@@ -241,7 +241,6 @@ class AnyCalibOp : public Iop, public Executable {
   double _k1 = 0, _k2 = 0;
   double _centre[2] = {0, 0};
   double _focal = 0;
-  double _rmsDeg = 0;
   double _frameSpread = 0;
   int _linesUsed = 0;
   double _lineCorrection = 0;
@@ -311,8 +310,6 @@ class AnyCalibOp : public Iop, public Executable {
   std::vector<uint8_t> readMask(int W, int H);
   bool infer(const std::vector<float>& img, int W, int H, double pa,
              std::vector<RaySample>& samples);
-  bool fitLens(const std::vector<RaySample>& samples, int W, int H, double pa, NukeLD& nk,
-               double& focal, FitStats* stats, std::string& err);
 };
 
 static Op* build(Node* node) { return new AnyCalibOp(node); }
@@ -376,26 +373,6 @@ void AnyCalibOp::knobs(Knob_Callback f) {
   ClearFlags(f, Knob::SLIDER);
   Tooltip(f, "How far the undistorted plate extends past the format: the overscan CG needs.");
 
-  Divider(f, "Checks");
-  Double_knob(f, &_rmsDeg, "rmsDegrees", "fit RMS (deg)");
-  SetFlags(f, resultFlags);
-  ClearFlags(f, Knob::SLIDER);
-  Tooltip(f, "RMS angle between the network's rays and the fitted lens.");
-  Double_knob(f, &_frameSpread, "frameSpread", "frame spread (px)");
-  SetFlags(f, resultFlags);
-  ClearFlags(f, Knob::SLIDER);
-  Tooltip(f, "Largest standard deviation of undistorted positions on a grid across the plate. "
-             "Includes displacement direction and centre changes. 0 with one frame.");
-  Int_knob(f, &_linesUsed, "linesUsed", "lines used");
-  SetFlags(f, resultFlags);
-  Tooltip(f, "Edges that refined the estimate: long, nearly straight and away from the centre, "
-             "where distortion bends them. Below 2, the network's estimate is used as it is.");
-  Double_knob(f, &_lineCorrection, "lineCorrection", "line correction (px)");
-  SetFlags(f, resultFlags);
-  ClearFlags(f, Knob::SLIDER);
-  Tooltip(f, "How far the lines moved the network's estimate: the largest change of a plate "
-             "corner's undistorted position.");
-
   Divider(f, "Output");
   Bool_knob(f, &_writeMaps, "writeMaps", "write STMaps (forward.u/v undistort, backward.u/v redistort)");
   SetFlags(f, Knob::STARTLINE);
@@ -412,6 +389,26 @@ void AnyCalibOp::knobs(Knob_Callback f) {
   PyScript_knob(f, kRedistortScript, "createRedistort", "Create LensDistortion (redistort)");
 
   Tab_knob(f, "Advanced");
+  Divider(f, "Checks");
+  Double_knob(f, &_frameSpread, "frameSpread", "frame variation (px)");
+  SetFlags(f, resultFlags);
+  ClearFlags(f, Knob::SLIDER);
+  Tooltip(f, "How much the analysed frames disagree about the lens, in pixels on the undistorted "
+             "plate, where they disagree most. 0 with one frame. Large when the lens changes over "
+             "the range (zoom, focus): analyse those parts separately.");
+  Int_knob(f, &_linesUsed, "linesUsed", "lines used");
+  SetFlags(f, resultFlags);
+  Tooltip(f, "Straight edges that refined the estimate. Only long edges away from the centre "
+             "count, where distortion bends them. With fewer than 2, the network's estimate is "
+             "kept.");
+  Double_knob(f, &_lineCorrection, "lineCorrection", "line correction (px)");
+  SetFlags(f, resultFlags);
+  ClearFlags(f, Knob::SLIDER);
+  Tooltip(f, "How far the lines moved the network's estimate, in pixels at the plate's corners. "
+             "If it's large on a plate full of curved architecture, compare with refine with "
+             "lines off.");
+
+  Divider(f, "Network");
   File_knob(f, &_model, "model", "model override");
   SetFlags(f, Knob::NO_RERENDER);
   Tooltip(f, "TorchScript network from tools/export_anycalib.py. Empty: $ANYCALIB_MODEL_PATH, "
@@ -540,7 +537,6 @@ const MetaData::Bundle& AnyCalibOp::_fetchMetaData(const char* key) {
   _meta.setData("lens/source", estimated ? "AnyCalib" : "manual");
   if (estimated) {
     _meta.setData("lens/focal_px", _focal);
-    _meta.setData("lens/fit_rms_deg", _rmsDeg);
     _meta.setData("lens/frame_spread_px", _frameSpread);
     _meta.setData("lens/lines_used", _linesUsed);
     _meta.setData("lens/line_correction_px", _lineCorrection);
@@ -601,7 +597,7 @@ void AnyCalibOp::execute() {
   progressFraction(0.7);
   double focal;
   std::string err;
-  if (!fitLens(Thin(fr.samples, 4096), W, H, pa, fr.lens, focal, nullptr, err)) {
+  if (!FitNukeLD(Thin(fr.samples, 4096), W, H, pa, fr.lens, focal, nullptr, &err, a.lockCentre)) {
     a.shot.fail("frame " + std::to_string(frame) + " fit failed: " + err);
     error("AnyCalib: %s", a.shot.error().c_str());
     return;
@@ -633,9 +629,9 @@ void AnyCalibOp::endExecuting() {
 
   NukeLD nk;
   double focal = 0;
-  FitStats st;
   std::string err;
-  if (!fitLens(shot.pooledSamples(), format.W, format.H, format.pa, nk, focal, &st, err)) {
+  if (!FitNukeLD(shot.pooledSamples(), format.W, format.H, format.pa, nk, focal, nullptr, &err,
+                 a.lockCentre)) {
     error("AnyCalib: pooled fit failed (%s)", err.c_str());
     return;
   }
@@ -657,10 +653,11 @@ void AnyCalibOp::endExecuting() {
   setKnob("distortionCenter", nk.cx, 0);
   setKnob("distortionCenter", nk.cy, 1);
   setKnob("focalPx", focal);
-  setKnob("rmsDegrees", st.rmsDeg);
-  setKnob("frameSpread", spread);
+  // Checks to 0.1 px: finer would only be noise.
+  auto px = [](double v) { return std::round(v * 10) / 10; };
+  setKnob("frameSpread", px(spread));
   setKnob("linesUsed", lines);
-  setKnob("lineCorrection", CornerChange(network, nk));
+  setKnob("lineCorrection", px(CornerChange(network, nk)));
   setText("modelFile", a.model);
   setText("modelSha256", a.digest);
   setKnob("framesAnalysed", double(nF));
@@ -745,11 +742,6 @@ bool AnyCalibOp::infer(const std::vector<float>& img, int W, int H, double pa,
   }
   a.device = eng->device();
   return true;
-}
-
-bool AnyCalibOp::fitLens(const std::vector<RaySample>& samples, int W, int H, double pa,
-                         NukeLD& nk, double& focal, FitStats* stats, std::string& err) {
-  return FitNukeLD(samples, W, H, pa, nk, focal, stats, &err, acc().lockCentre);
 }
 
 Op::HandlesMode AnyCalibOp::doAnyHandles(ViewerContext* ctx) {

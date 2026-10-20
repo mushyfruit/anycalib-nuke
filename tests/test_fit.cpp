@@ -117,9 +117,8 @@ int main() {
     });
     NukeLD fit;
     double f = 0;
-    FitStats st;
     std::string err;
-    bool ok = FitNukeLD(s, c.W, c.H, c.pa, fit, f, &st, &err);
+    bool ok = FitNukeLD(s, c.W, c.H, c.pa, fit, f, nullptr, &err);
     const double shiftErr = std::fabs(CornerShiftPx(fit) - CornerShiftPx(gt));
     Check(("Nuke fit recovers LensDistortion " + std::to_string(c.W) + "x" + std::to_string(c.H) +
            (c.pa != 1.0 ? " pixel aspect " + std::to_string(int(c.pa)) : "")).c_str(),

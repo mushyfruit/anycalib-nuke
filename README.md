@@ -49,18 +49,17 @@ optimises the graph. On the CPU a frame takes about 1.4 s.
 
 ### Checks
 
-- `fit RMS`: the RMS angle between the network's rays and the fitted lens. It's large when
-  the lens model can't follow the network, as on a fisheye, but says nothing about whether
-  the network is right.
-- `frame spread`: the largest standard deviation of undistorted positions on a 9×9 grid
-  across the plate, in pixels. This includes displacement direction and centre changes.
-  0 for a single frame; it measures consistency, not accuracy against a known lens.
-- `lines used`: edges that refined the network's estimate. Only long, nearly straight edges
-  away from the centre count, where distortion bends them; lines through the centre don't
-  bend. Below 2 the network's estimate is kept as it is.
-- `line correction`: how far the lines moved the estimate, as the largest change of a plate
-  corner's undistorted position, in pixels. A large correction on a plate full of curved
-  architecture deserves a look; turn off `refine with lines` to compare.
+On the Advanced tab, rounded to 0.1 px:
+
+- `frame variation`: how much the analysed frames disagree about the lens, in pixels on the
+  undistorted plate, where they disagree most. 0 for a single frame. A large value means the
+  lens changed over the range (zoom, focus), so analyse those parts separately.
+- `lines used`: straight edges that refined the network's estimate. Only long edges away from
+  the centre count, where distortion bends them; lines through the centre don't bend. Below 2
+  the network's estimate is kept as it is.
+- `line correction`: how far the lines moved the estimate, in pixels at the plate's corners. A
+  large correction on a plate full of curved architecture deserves a look; turn off
+  `refine with lines` to compare.
 
 ### Metadata
 
@@ -69,8 +68,8 @@ optimises the graph. On the CPU a frame takes about 1.4 s.
 | `lens/model` | `nukex_classic` |
 | `lens/k1`, `lens/k2` | `distortion1`, `distortion2` |
 | `lens/centre`, `lens/centre_px` | `distortionCenter` (normalised, y up), and in pixels |
-| `lens/fit_rms_deg`, `lens/frame_spread_px` | see above |
-| `lens/lines_used`, `lens/line_correction_px` | see above |
+| `lens/frame_spread_px` | frame variation |
+| `lens/lines_used`, `lens/line_correction_px` | see Checks |
 | `lens/focal_px` | focal length of the fit, in pixels |
 | `lens/frames` | analysed range, e.g. `1001-1100 (24 frames)` |
 | `lens/estimator`, `lens/estimator_version` | `AnyCalib`; plugin and libtorch versions, CUDA or CPU |
@@ -86,7 +85,7 @@ The EXR writer prefixes them with `nuke/` unless *do not attach prefix* is on.
 - Spherical lenses only. Non-square pixels are handled through the format's pixel aspect, but
   anamorphic squeeze isn't estimated.
 - Fisheyes are out of reach. The fit follows them, but undistorting one to a pinhole image
-  moves its corners thousands of pixels. On the GoPro HERO4 plate `fit RMS` flags the result.
+  moves its corners thousands of pixels.
 - One lens per analysed range: zooms and focus breathing need separate ranges.
 - LensDistortion2 writes (−1, −1) in its undistort map at some off-plate pixels; this node
   only does so where there's no inverse.

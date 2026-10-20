@@ -63,10 +63,9 @@ ac["analyze"].execute()
 
 check("analysis ran over the range", int(ac["framesAnalysed"].value()) == len(plates),
       "framesAnalysed=%d framesInfo=%r" % (ac["framesAnalysed"].value(), ac["framesInfo"].value()))
-check("checks recorded", ac["rmsDegrees"].value() > 0 and ac["frameSpread"].value() > 0,
-      "fit RMS %.3f deg, frame spread %.2f px, %d lines, line correction %.2f px" % (
-          ac["rmsDegrees"].value(), ac["frameSpread"].value(), ac["linesUsed"].value(),
-          ac["lineCorrection"].value()))
+check("checks recorded", ac["frameSpread"].value() > 0,
+      "frame variation %.1f px, %d lines, line correction %.1f px" % (
+          ac["frameSpread"].value(), ac["linesUsed"].value(), ac["lineCorrection"].value()))
 check("estimator version + model digest recorded",
       ac["estimatorVersion"].value().startswith("anycalib-nuke/") and len(ac["modelSha256"].value()) == 64,
       ac["estimatorVersion"].value())
@@ -75,7 +74,7 @@ check("maps off by default: plate passes through, bbox unchanged",
 
 def analysis_snapshot(node):
     return {name: node[name].toScript() for name in (
-        "distortion1", "distortion2", "distortionCenter", "rmsDegrees", "frameSpread",
+        "distortion1", "distortion2", "distortionCenter", "frameSpread",
         "linesUsed", "lineCorrection", "framesAnalysed", "framesInfo", "modelFile",
         "modelSha256", "estimatorVersion", "linesData", "overscan")}
 
@@ -287,14 +286,14 @@ for (x, y) in grid[2::5]:
 check("created node == LensDistortion2 Undistort with our values", diff < 1e-6, "max diff %.2e" % diff)
 
 nk = os.path.join(OUT, "persist.nk")
-saved = dict(d1=d1, rms=an["rmsDegrees"].value(), name=an.name(),
+saved = dict(d1=d1, corr=an["lineCorrection"].value(), name=an.name(),
              lines=len(an["linesData"].value()))
 nuke.scriptSaveAs(nk, overwrite=1)
 nuke.scriptClear()
 nuke.scriptOpen(nk)
 a2 = nuke.toNode(saved["name"])
 check("results persist in the script",
-      abs(a2["distortion1"].value() - saved["d1"]) < 1e-9 and abs(a2["rmsDegrees"].value() - saved["rms"]) < 1e-9
+      abs(a2["distortion1"].value() - saved["d1"]) < 1e-9 and a2["lineCorrection"].value() == saved["corr"] > 0
       and len(a2["linesData"].value()) == saved["lines"] and saved["lines"] > 100,
       "linesData %d bytes" % saved["lines"])
 
