@@ -14,6 +14,8 @@ produces what a comp needs:
 - Create LensDistortion buttons that build LensDistortion2 nodes, as CameraTracker does.
 - A viewer overlay of detected lines: green if they're straight under the estimate, red if not.
 
+![A plate through a barrel lens, and undistorted with the node's estimate](docs/images/hero.jpg)
+
 ## Install
 
 Needs Nuke 17 on Linux. Unpack the [release](../../releases) and add its `anycalib` folder,
@@ -61,23 +63,12 @@ On the Advanced tab, rounded to 0.1 px:
   large correction on a plate full of curved architecture deserves a look; turn off
   `refine with lines` to compare.
 
-### Metadata
+## Results
 
-| Key | |
-|---|---|
-| `lens/model` | `nukex_classic` |
-| `lens/k1`, `lens/k2` | `distortion1`, `distortion2` |
-| `lens/centre`, `lens/centre_px` | `distortionCenter` (normalised, y up), and in pixels |
-| `lens/frame_spread_px` | frame variation |
-| `lens/lines_used`, `lens/line_correction_px` | see Checks |
-| `lens/focal_px` | focal length of the fit, in pixels |
-| `lens/frames` | analysed range, e.g. `1001-1100 (24 frames)` |
-| `lens/estimator`, `lens/estimator_version` | `AnyCalib`; plugin and libtorch versions, CUDA or CPU |
-| `lens/model_sha256` | SHA-256 of the network file |
-| `lens/overscan` | left, bottom, right, top, in pixels |
-| `lens/source` | `AnyCalib`, or `manual` before any analysis |
+Mean undistortion error on 341 held-out plates of real cine footage from
+[InFlux](https://influx.cs.princeton.edu/). Assuming no distortion at all scores 8.34 px.
 
-The EXR writer prefixes them with `nuke/` unless *do not attach prefix* is on.
+![Mean map error on InFlux: stock AnyCalib 9.97 px, fine-tuned 5.36 px](docs/images/results.png)
 
 ## Limitations
 
@@ -89,3 +80,5 @@ The EXR writer prefixes them with `nuke/` unless *do not attach prefix* is on.
 - One lens per analysed range: zooms and focus breathing need separate ranges.
 - LensDistortion2 writes (−1, −1) in its undistort map at some off-plate pixels; this node
   only does so where there's no inverse.
+
+[Write-up](https://www.andrewboyles.com/thoughts/anycalib-nuke)
