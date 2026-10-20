@@ -1,6 +1,6 @@
 # AnyCalib for Nuke
 
-A Nuke 17 node that estimates lens distortion from the plate, with no grid or camera move. It
+A Nuke 17 node (17.0 and 17.1, Linux) that estimates lens distortion from the plate, with no grid or camera move. It
 runs [AnyCalib](https://github.com/javrtg/AnyCalib), fine-tuned on real footage and on renders
 through Nuke's lens model, then refines the estimate so that straight edges in the plate come
 out straight. [Write-up](https://www.andrewboyles.com/thoughts/anycalib-nuke).
@@ -20,12 +20,12 @@ It produces:
 
 ## Install
 
-Needs Nuke 17 on Linux. Unpack the plugin from the [release](../../releases) and download the
-network from [Hugging Face](https://huggingface.co/mushyfruit/anycalib-nuke) into its `models`
-folder:
+Needs Nuke 17.0 or 17.1 on Linux. Unpack the plugin for your Nuke version from the
+[release](../../releases) and download the network from
+[Hugging Face](https://huggingface.co/mushyfruit/anycalib-nuke) into its `models` folder:
 
 ```sh
-tar xzf anycalib-nuke-*-nuke17-linux-plugin.tar.gz
+tar xzf anycalib-nuke-*-nuke17.1-linux-plugin.tar.gz   # or nuke17.0
 curl -L -o anycalib/models/anycalib_dist.pt \
     https://huggingface.co/mushyfruit/anycalib-nuke/resolve/main/anycalib_dist.pt
 ```
@@ -75,9 +75,11 @@ apart they land. On one of the better plates, with each arrow drawn 4× its leng
 
 ![Undistortion error on one plate: stock AnyCalib 16.6 px mean, fine-tuned 1.0 px](docs/images/error-field.jpg)
 
-Averaged over 341 held-out plates of real cine footage from
-[InFlux](https://influx.cs.princeton.edu/) (CC BY 4.0). Assuming no distortion at all scores
-8.34 px.
+Averaged over 341 plates of real cine footage from [InFlux](https://influx.cs.princeton.edu/)
+(CC BY 4.0), from locations held out of training but shot on the same camera and zooms as the
+real footage the network was fine-tuned on. Assuming no distortion at all scores 8.34 px. On
+photos from many other cameras ([MegaDepth](https://github.com/cvg/GeoCalib)), the fine-tune
+still clearly beats stock AnyCalib.
 
 ![Mean map error on InFlux: stock AnyCalib 9.97 px, fine-tuned 5.36 px](docs/images/results.png)
 
