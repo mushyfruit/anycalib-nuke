@@ -6,7 +6,6 @@
 gopro_hero7_*.jpg plates (see test-assets/SOURCES.md). Prints PASS/FAIL per
 check and exits non-zero on any failure.
 """
-import json
 import math
 import os
 import shutil
@@ -66,45 +65,38 @@ seq = read(os.path.join(seq_dir, "plate.####.jpg"), 1, len(plates))
 ac = nuke.nodes.AnyCalib(inputs=[seq])
 ac["analyze"].execute()
 
-check("analysis ran over the range", int(ac["framesAnalysed"].value()) == len(plates),
-      "framesAnalysed=%d framesInfo=%r" % (ac["framesAnalysed"].value(), ac["framesInfo"].value()))
+frames = sum(l.startswith("F ") for l in ac["linesData"].value().splitlines())
+check("analysis ran over the range", frames == len(plates), "%d frames" % frames)
 check("checks recorded", ac["frameSpread"].value() > 0,
       "frame variation %.1f px, %d lines, line correction %.1f px" % (
           ac["frameSpread"].value(), ac["linesUsed"].value(), ac["lineCorrection"].value()))
-check("estimator version + model digest recorded",
-      ac["estimatorVersion"].value().startswith("anycalib-nuke/") and len(ac["modelSha256"].value()) == 64,
-      ac["estimatorVersion"].value())
 check("maps off by default: plate passes through, bbox unchanged",
       "forward.u" not in ac.channels() and ac.bbox().w() == seq.bbox().w() and ac.bbox().h() == seq.bbox().h())
 
 def analysis_snapshot(node):
     return {name: node[name].toScript() for name in (
         "distortion1", "distortion2", "distortionCenter", "frameSpread",
-        "linesUsed", "lineCorrection", "framesAnalysed", "framesInfo", "modelFile",
-        "modelSha256", "estimatorVersion", "linesData", "overscan")}
+        "linesUsed", "lineCorrection", "linesData", "overscan")}
 
 
 previous = analysis_snapshot(ac)
 ac["analysisFrameCount"].setValue(2)
-ac["analysisModelSha256"].setValue("f" * 64)
 try:
     nuke.execute(ac, 1, 1, views=[nuke.views()[0]])
 except RuntimeError:
     pass
-check("incomplete analysis preserves result and provenance", analysis_snapshot(ac) == previous)
+check("incomplete analysis preserves the result", analysis_snapshot(ac) == previous)
 
 ac["analysisFrameCount"].setValue(1)
 ac["analysisModelFile"].setValue(os.path.join(OUT, "nonexistent-model.pt"))
-ac["analysisModelSha256"].setValue("e" * 64)
 try:
     nuke.execute(ac, 1, 1, views=[nuke.views()[0]])
 except RuntimeError:
     pass
-check("failed model load preserves result and provenance", analysis_snapshot(ac) == previous)
+check("failed model load preserves the result", analysis_snapshot(ac) == previous)
 ac["analyze"].execute()
-check("analysis recovers after failure", ac["modelSha256"].value() == previous["modelSha256"])
-check("line refinement is exported", ac.metadata("lens/lines_used") == int(ac["linesUsed"].value()) and
-      abs(ac.metadata("lens/line_correction_px") - ac["lineCorrection"].value()) < 1e-9)
+check("analysis recovers after failure", abs(ac["distortion1"].value() - float(previous["distortion1"])) < 1e-4,
+      "%.8f vs %s" % (ac["distortion1"].value(), previous["distortion1"]))
 
 # STMaps against Foundry's LensDistortion nodes
 syn = read(SYN)
@@ -254,20 +246,11 @@ check("pixel aspect 2: forward.u/v == LensDistortion2 (within its own approximat
 _, contains, info = bbox_diff(pa_ac, pa_ld)
 check("pixel aspect 2: bbox covers LensDistortion2 STMap Auto bbox", contains, info)
 
-md = an.metadata()
-want = ["lens/k1", "lens/k2", "lens/centre", "lens/model", "lens/model_sha256", "lens/estimator_version"]
-check("lens metadata on the stream", all(k in md for k in want),
-      json.dumps({k: md.get(k) for k in want}, default=str)[:300])
-exr = os.path.join(OUT, "meta.exr")
+exr = os.path.join(OUT, "maps.exr")
 w = nuke.nodes.Write(inputs=[an], file=file_path(exr), file_type="exr")
-w["metadata"].setValue("all metadata")
 w["channels"].setValue("all")
 nuke.execute(w, 1, 1)
 rb = nuke.nodes.Read(file=file_path(exr))
-rmd = rb.metadata()
-lens_keys = sorted(k for k in rmd if "lens/" in k)
-check("lens metadata in the EXR header", any(k.endswith("lens/k1") for k in lens_keys) and
-      any(k.endswith("lens/estimator_version") for k in lens_keys), ", ".join(lens_keys))
 check("STMap channels written to EXR",
       all(c in rb.channels() for c in ("forward.u", "forward.v", "backward.u", "backward.v")))
 
@@ -323,19 +306,6 @@ check("refine with lines off: no lines used, the correction is the difference",
       and abs(moved - free["lineCorrection"].value()) < 0.5 * free["lineCorrection"].value() + 0.1,
       "%d lines, correction %.2f px, corners move %.2f px" % (
           free["linesUsed"].value(), free["lineCorrection"].value(), moved))
-
-bars = nuke.nodes.Rectangle()
-bars["area"].setValue([0, 0, W, int(0.12 * H)])
-bars = nuke.nodes.Rectangle(inputs=[bars])
-bars["area"].setValue([0, int(0.88 * H), W, H])
-ms = nuke.nodes.AnyCalib(inputs=[syn, bars], ignore="Mask Alpha", writeMaps=True)
-ms["analyze"].execute()
-ys = [float(v) for l in ms["linesData"].value().splitlines() if l.startswith("S") for v in l.split()[2::2]]
-shift, _ = max_err(ms, "forward", free, "forward", [(x, y) for x in (0.5, W - 0.5) for y in (0.5, H - 0.5)])
-check("mask: no lines in letterbox bars, lens within a few px",
-      ys and min(ys) >= 0.12 * H and max(ys) <= 0.88 * H and shift < 5,
-      "%d line points, y %.0f-%.0f of %d; corners move %.2f px" % (
-          len(ys), min(ys) if ys else -1, max(ys) if ys else -1, H, shift))
 
 dark = nuke.nodes.AnyCalib(inputs=[nuke.nodes.Multiply(inputs=[syn], value=0.25)])
 dark["analyze"].execute()

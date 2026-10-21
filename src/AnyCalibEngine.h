@@ -12,13 +12,11 @@
 
 namespace anycalib {
 
-enum class Device { Auto, CPU, CUDA };
+enum class Device { Auto, CPU };
 
 class AnyCalibEngine {
  public:
   virtual ~AnyCalibEngine() = default;
-
-  virtual const std::string& device() const = 0;  // "CUDA" or "CPU"
 
   // rgb: interleaved sRGB in [0,1], top row first. Appends a sample per network pixel.
   virtual bool Infer(const float* rgb, int w, int h, double pixelAspect,

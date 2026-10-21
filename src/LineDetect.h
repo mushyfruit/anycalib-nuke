@@ -15,9 +15,8 @@ struct Segment {
   std::vector<float> xy;  // polyline, plate pixels, y down
 };
 
-// gray: top row first. Nonzero `exclude` pixels are ignored. Longest first, 24 points each.
-std::vector<Segment> DetectSegments(const float* gray, int w, int h, int maxSegments = 48,
-                                    const uint8_t* exclude = nullptr);
+// gray: top row first. Longest first, 24 points each.
+std::vector<Segment> DetectSegments(const float* gray, int w, int h, int maxSegments = 48);
 
 // m's k1 and k2, adjusted so the segments come out straight. Needs two that distortion bends.
 struct LineRefinement {

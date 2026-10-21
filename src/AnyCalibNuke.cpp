@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -15,7 +16,6 @@
 #include "DDImage/Interest.h"
 #include "DDImage/Iop.h"
 #include "DDImage/Knobs.h"
-#include "DDImage/MetaData.h"
 #include "DDImage/Row.h"
 #include "DDImage/ViewerContext.h"
 #include "DDImage/gl.h"
@@ -26,8 +26,6 @@
 #include "LineDetect.h"
 #include "ShotAnalysis.h"
 
-#include <torch/version.h>
-
 using namespace DD::Image;
 using namespace anycalib;
 
@@ -37,8 +35,7 @@ static const char* const HELP =
     "Estimates lens distortion from the plate with the AnyCalib network "
     "(github.com/javrtg/AnyCalib).\n"
     "  forward.u/v   undistort STMap (as LensDistortion2, output STMap)\n"
-    "  backward.u/v  redistort STMap\n"
-    "  lens/*        metadata\n\n"
+    "  backward.u/v  redistort STMap\n\n"
     "distortion1/2 and distortionCenter are Foundry's NukeX Classic values, as "
     "CameraTracker uses them.";
 
@@ -46,32 +43,17 @@ namespace {
 
 const ChannelSet kMapChannels(Mask_U | Mask_V | Mask_Backward_U | Mask_Backward_V);
 
-const char* const kDeviceNames[] = {"auto (CUDA, else CPU)", "CPU", "CUDA", nullptr};
-const Device kDevices[] = {Device::Auto, Device::CPU, Device::CUDA};
-
-const char* const kMaskNames[] = {"None", "Source Alpha", "Source Inverted Alpha", "Mask Luminance",
-                                  "Mask Inverted Luminance", "Mask Alpha", "Mask Inverted Alpha",
-                                  nullptr};
-enum MaskMode {
-  kNoMask,
-  kSourceAlpha,
-  kSourceInvertedAlpha,
-  kMaskLuminance,
-  kMaskInvertedLuminance,
-  kMaskAlpha,
-  kMaskInvertedAlpha,
-};
+const char* const kDeviceNames[] = {"auto (CUDA, else CPU)", "CPU", nullptr};
 
 inline float SrgbOetf(float c) {
   c = std::min(std::max(c, 0.0f), 1.0f);
   return c <= 0.0031308f ? 12.92f * c : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
 }
 
-inline float Luma(float r, float g, float b) { return 0.2126f * r + 0.7152f * g + 0.0722f * b; }
-
 std::vector<float> Luminance(const std::vector<float>& rgb) {
   std::vector<float> gray(rgb.size() / 3);
-  for (size_t i = 0; i < gray.size(); ++i) gray[i] = Luma(rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]);
+  for (size_t i = 0; i < gray.size(); ++i)
+    gray[i] = 0.2126f * rgb[3 * i] + 0.7152f * rgb[3 * i + 1] + 0.0722f * rgb[3 * i + 2];
   return gray;
 }
 
@@ -92,9 +74,10 @@ std::mutex gEngineMu;
 std::unique_ptr<AnyCalibEngine>& gEngine = *new std::unique_ptr<AnyCalibEngine>();
 std::string gEngineKey;
 
-AnyCalibEngine* GetEngine(const std::string& model, const std::string& digest, Device device,
-                          std::string& err) {
-  const std::string key = digest + "|" + std::to_string(int(device));
+AnyCalibEngine* GetEngine(const std::string& model, Device device, std::string& err) {
+  std::error_code ec;
+  const auto mtime = std::filesystem::last_write_time(model, ec).time_since_epoch().count();
+  const std::string key = model + "|" + std::to_string(mtime) + "|" + std::to_string(int(device));
   if (gEngine && gEngineKey == key) return gEngine.get();
   gEngine.reset();  // free the old network before loading the new one
   gEngine = LoadEngine(model, device, &err);
@@ -105,19 +88,18 @@ AnyCalibEngine* GetEngine(const std::string& model, const std::string& digest, D
 // Analysis state, on firstOp(): Nuke executes each frame on its own op.
 struct Accumulator {
   ShotAnalysis shot;
-  std::string device, digest, model;
+  std::string model;
   Device requestedDevice = Device::Auto;
   bool lockCentre = false, refineLines = true;
 };
 
-// The 90th percentile of up to ~1M unmasked pixels exposed to 0.8, as AnyCalib's training
-// panoramas were, then the sRGB curve.
-void ExposeToSrgb(std::vector<float>& img, const std::vector<uint8_t>& excluded) {
+// The 90th percentile of up to ~1M pixels exposed to 0.8, as AnyCalib's training panoramas
+// were, then the sRGB curve.
+void ExposeToSrgb(std::vector<float>& img) {
   const size_t n = img.size() / 3, step = std::max<size_t>(1, n >> 20);
   std::vector<float> s;
   s.reserve(3 * (n / step + 1));
-  for (size_t i = 0; i < n; i += step)
-    if (excluded.empty() || !excluded[i]) s.insert(s.end(), &img[3 * i], &img[3 * i + 3]);
+  for (size_t i = 0; i < n; i += step) s.insert(s.end(), &img[3 * i], &img[3 * i + 3]);
   float k = 1;
   if (!s.empty()) {
     auto p90 = s.begin() + s.size() * 9 / 10;
@@ -137,15 +119,6 @@ double CornerChange(const NukeLD& a, const NukeLD& b) {
         d = std::max(d, std::hypot(ax - bx, ay - by));
     }
   return d;
-}
-
-void DropExcluded(std::vector<RaySample>& samples, const std::vector<uint8_t>& excluded, int W,
-                  int H) {
-  if (excluded.empty()) return;
-  auto masked = [&](const RaySample& s) {
-    return excluded[size_t(std::min(H - 1, int(s.v))) * W + std::min(W - 1, int(s.u))] != 0;
-  };
-  samples.erase(std::remove_if(samples.begin(), samples.end(), masked), samples.end());
 }
 
 // linesData: "W <w> H <h>\nF <frame>\nS x y x y ...", plate pixels, y down.
@@ -235,23 +208,15 @@ class AnyCalibOp : public Iop, public Executable {
   bool _useInputRange = true;
   int _first = 1, _last = 100;
   int _maxFrames = 24;
-  int _ignore = kNoMask;
   bool _lockCentre = false;
   bool _refineLines = true;
   double _k1 = 0, _k2 = 0;
   double _centre[2] = {0, 0};
-  double _focal = 0;
   double _frameSpread = 0;
   int _linesUsed = 0;
   double _lineCorrection = 0;
-  int _framesAnalysed = 0;
-  const char* _framesInfo = nullptr;
-  const char* _estimatorVersion = nullptr;
-  const char* _modelFile = nullptr;
-  const char* _modelDigest = nullptr;
-  // Pending request; provenance above is committed only after a complete analysis.
+  // Set by the Analyze button.
   const char* _analysisModel = nullptr;
-  const char* _analysisDigest = nullptr;
   int _analysisFrameCount = 0;
   double _overscan[4] = {0, 0, 0, 0};  // left, bottom, right, top (px)
   bool _writeMaps = false;
@@ -260,7 +225,6 @@ class AnyCalibOp : public Iop, public Executable {
 
   NukeLD _lens;
   std::shared_ptr<Accumulator> _acc;
-  MetaData::Bundle _meta;
   std::string _parsedFrom;
   ParsedLines _parsed;
 
@@ -273,8 +237,7 @@ class AnyCalibOp : public Iop, public Executable {
   const char* Class() const override { return CLASS; }
   const char* node_help() const override { return HELP; }
   int minimum_inputs() const override { return 1; }
-  int maximum_inputs() const override { return 2; }
-  const char* input_label(int n, char*) const override { return n == 0 ? "plate" : "mask"; }
+  int maximum_inputs() const override { return 1; }
 
   Executable* executable() override { return this; }
   bool isExecuteThreadSafe() const override { return false; }  // one shared network
@@ -287,7 +250,6 @@ class AnyCalibOp : public Iop, public Executable {
   void _validate(bool) override;
   void _request(int x, int y, int r, int t, ChannelMask channels, int count) override;
   void engine(int y, int x, int r, ChannelMask channels, Row& row) override;
-  const MetaData::Bundle& _fetchMetaData(const char* key) override;
 
   void beginExecuting() override;
   void execute() override;
@@ -304,10 +266,7 @@ class AnyCalibOp : public Iop, public Executable {
   void setText(const char* name, const std::string& v) { knob(name)->set_text(v.c_str()); }
 
   Accumulator& acc() { return *static_cast<AnyCalibOp*>(firstOp())->_acc; }
-  template <class F>
-  void readRows(Iop& in, int W, int H, const ChannelSet& chans, F onRow);
   std::vector<float> readPlate(Iop& in, int W, int H);
-  std::vector<uint8_t> readMask(int W, int H);
   bool infer(const std::vector<float>& img, int W, int H, double pa,
              std::vector<RaySample>& samples);
 };
@@ -340,10 +299,6 @@ void AnyCalibOp::knobs(Knob_Callback f) {
   SetFlags(f, Knob::NO_RERENDER);
   Tooltip(f, "Frames sampled evenly across the range and pooled into one fit. The lens is "
              "assumed fixed over the range.");
-  Enumeration_knob(f, &_ignore, kMaskNames, "ignore", "mask");
-  SetFlags(f, Knob::NO_RERENDER);
-  Tooltip(f, "Regions to leave out of the analysis, such as moving objects, burn-ins or "
-             "letterbox bars. White is left out, as with CameraTracker's mask.");
   Bool_knob(f, &_lockCentre, "lockCentre", "lock centre");
   SetFlags(f, Knob::STARTLINE | Knob::NO_RERENDER);
   Tooltip(f, "Keep distortion center at 0, the middle of the format, and fit only distortion 1 "
@@ -419,15 +374,7 @@ void AnyCalibOp::knobs(Knob_Callback f) {
   // Saved with the analysis, not shown.
   MultiFloat_knob(f, _matrix, 9, "inputMatrix", INVISIBLE);
   SetFlags(f, Knob::NO_RERENDER);
-  Double_knob(f, &_focal, "focalPx", INVISIBLE);
-  Int_knob(f, &_framesAnalysed, "framesAnalysed", INVISIBLE);
-  String_knob(f, &_framesInfo, "framesInfo", INVISIBLE);
-  String_knob(f, &_estimatorVersion, "estimatorVersion", INVISIBLE);
-  String_knob(f, &_modelFile, "modelFile", INVISIBLE);
-  String_knob(f, &_modelDigest, "modelSha256", INVISIBLE);
   String_knob(f, &_analysisModel, "analysisModelFile", INVISIBLE);
-  SetFlags(f, Knob::NO_RERENDER);
-  String_knob(f, &_analysisDigest, "analysisModelSha256", INVISIBLE);
   SetFlags(f, Knob::NO_RERENDER);
   Int_knob(f, &_analysisFrameCount, "analysisFrameCount", INVISIBLE);
   SetFlags(f, Knob::NO_RERENDER);
@@ -525,38 +472,13 @@ void AnyCalibOp::engine(int y, int x, int r, ChannelMask channels, Row& row) {
   }
 }
 
-const MetaData::Bundle& AnyCalibOp::_fetchMetaData(const char* key) {
-  _meta = input0().fetchMetaData(key);
-  const bool estimated = _framesAnalysed > 0;
-  _meta.setData("lens/model", "nukex_classic");
-  _meta.setData("lens/k1", _k1);
-  _meta.setData("lens/k2", _k2);
-  _meta.setData("lens/centre", _centre, 2);
-  const double centrePx[2] = {_lens.centreX(), _lens.centreY()};
-  _meta.setData("lens/centre_px", centrePx, 2);
-  _meta.setData("lens/source", estimated ? "AnyCalib" : "manual");
-  if (estimated) {
-    _meta.setData("lens/focal_px", _focal);
-    _meta.setData("lens/frame_spread_px", _frameSpread);
-    _meta.setData("lens/lines_used", _linesUsed);
-    _meta.setData("lens/line_correction_px", _lineCorrection);
-    _meta.setData("lens/frames", _framesInfo ? _framesInfo : "");
-    _meta.setData("lens/estimator", "AnyCalib");
-    _meta.setData("lens/estimator_version", _estimatorVersion ? _estimatorVersion : "");
-    _meta.setData("lens/model_sha256", _modelDigest ? _modelDigest : "");
-  }
-  _meta.setData("lens/overscan", _overscan, 4);
-  return _meta;
-}
-
 void AnyCalibOp::beginExecuting() {
   Accumulator& a = acc();
   a = Accumulator();
   // Set by the Analyze button.
   a.shot = ShotAnalysis(size_t(std::max(0, _analysisFrameCount)));
   a.model = _analysisModel ? _analysisModel : "";
-  a.digest = _analysisDigest ? _analysisDigest : "";
-  a.requestedDevice = kDevices[_device];
+  a.requestedDevice = _device ? Device::CPU : Device::Auto;
   a.lockCentre = _lockCentre;
   a.refineLines = _refineLines;
   if (a.model.empty()) a.shot.fail("run the analysis with the Analyze button");
@@ -581,9 +503,7 @@ void AnyCalibOp::execute() {
 
   std::vector<float> img = readPlate(in, W, H);
   if (aborted()) return;
-  const std::vector<uint8_t> excluded = readMask(W, H);
-  if (aborted()) return;
-  ExposeToSrgb(img, excluded);
+  ExposeToSrgb(img);
 
   progressMessage("AnyCalib: network, frame %g", frame);
   progressFraction(0.35);
@@ -591,7 +511,6 @@ void AnyCalibOp::execute() {
   fr.frame = frame;
   if (!infer(img, W, H, pa, fr.samples)) return;
   if (aborted()) return;
-  DropExcluded(fr.samples, excluded, W, H);
 
   progressMessage("AnyCalib: fitting frame %g", frame);
   progressFraction(0.7);
@@ -606,7 +525,7 @@ void AnyCalibOp::execute() {
   progressMessage("AnyCalib: lines, frame %g", frame);
   progressFraction(0.85);
   const std::vector<float> gray = Luminance(img);
-  fr.segs = DetectSegments(gray.data(), W, H, 48, excluded.empty() ? nullptr : excluded.data());
+  fr.segs = DetectSegments(gray.data(), W, H);
   if (aborted()) return;
   progressFraction(1.0);
 
@@ -652,21 +571,11 @@ void AnyCalibOp::endExecuting() {
   setKnob("distortion2", nk.k2);
   setKnob("distortionCenter", nk.cx, 0);
   setKnob("distortionCenter", nk.cy, 1);
-  setKnob("focalPx", focal);
   // Checks to 0.1 px: finer would only be noise.
   auto px = [](double v) { return std::round(v * 10) / 10; };
   setKnob("frameSpread", px(spread));
   setKnob("linesUsed", lines);
   setKnob("lineCorrection", px(CornerChange(network, nk)));
-  setText("modelFile", a.model);
-  setText("modelSha256", a.digest);
-  setKnob("framesAnalysed", double(nF));
-
-  std::ostringstream fi;
-  fi << frames.front().frame << "-" << frames.back().frame << " (" << nF << " frames)";
-  setText("framesInfo", fi.str());
-  setText("estimatorVersion",
-          "anycalib-nuke/" ANYCALIB_NUKE_VERSION " libtorch/" TORCH_VERSION " " + a.device);
 
   // Overlay lines for up to 32 evenly spaced frames, to bound the script size.
   setText("linesData", SerialiseLines(nk.W, nk.H, frames, std::max<size_t>(1, (nF + 31) / 32)));
@@ -674,21 +583,14 @@ void AnyCalibOp::endExecuting() {
   storeOverscan(nk);
 }
 
-template <class F>
-void AnyCalibOp::readRows(Iop& in, int W, int H, const ChannelSet& chans, F onRow) {
-  in.request(0, 0, W, H, chans, 1);
-  Interest interest(in, 0, 0, W, H, chans, true);
+std::vector<float> AnyCalibOp::readPlate(Iop& in, int W, int H) {
+  std::vector<float> img(size_t(W) * H * 3);
+  in.request(0, 0, W, H, Mask_RGB, 1);
+  Interest interest(in, 0, 0, W, H, Mask_RGB, true);
   interest.unlock();
   Row row(0, W);
   for (int y = 0; y < H && !aborted(); ++y) {
-    row.get(in, y, 0, W, chans);
-    onRow(row, y);
-  }
-}
-
-std::vector<float> AnyCalibOp::readPlate(Iop& in, int W, int H) {
-  std::vector<float> img(size_t(W) * H * 3);
-  readRows(in, W, H, Mask_RGB, [&](const Row& row, int y) {
+    row.get(in, y, 0, W, Mask_RGB);
     const float* R = row[Chan_Red];
     const float* G = row[Chan_Green];
     const float* B = row[Chan_Blue];
@@ -699,34 +601,8 @@ std::vector<float> AnyCalibOp::readPlate(Iop& in, int W, int H) {
         d[c] = float(_matrix[3 * c] * p[0] + _matrix[3 * c + 1] * p[1] + _matrix[3 * c + 2] * p[2]);
     }
     if ((y & 63) == 0) progressFraction(0.3 * y / H);
-  });
+  }
   return img;
-}
-
-// Pixels the mask leaves out, top row first. Empty without a mask.
-std::vector<uint8_t> AnyCalibOp::readMask(int W, int H) {
-  Iop* m = nullptr;
-  if (_ignore == kSourceAlpha || _ignore == kSourceInvertedAlpha)
-    m = &input0();
-  else if (_ignore != kNoMask && node_input(1))
-    m = dynamic_cast<Iop*>(input(1));
-  if (!m) return {};
-
-  const bool luma = _ignore == kMaskLuminance || _ignore == kMaskInvertedLuminance;
-  const bool invert = _ignore == kSourceInvertedAlpha || _ignore == kMaskInvertedLuminance ||
-                      _ignore == kMaskInvertedAlpha;
-  const ChannelSet chans = luma ? ChannelSet(Mask_RGB) : ChannelSet(Mask_Alpha);
-  m->validate(true);
-  std::vector<uint8_t> out(size_t(W) * H);
-  readRows(*m, W, H, chans, [&](const Row& row, int y) {
-    uint8_t* e = &out[size_t(H - 1 - y) * W];
-    for (int X = 0; X < W; ++X) {
-      const float v = luma ? Luma(row[Chan_Red][X], row[Chan_Green][X], row[Chan_Blue][X])
-                           : row[Chan_Alpha][X];
-      e[X] = (invert ? 1 - v : v) >= 0.5f;
-    }
-  });
-  return out;
 }
 
 bool AnyCalibOp::infer(const std::vector<float>& img, int W, int H, double pa,
@@ -734,13 +610,12 @@ bool AnyCalibOp::infer(const std::vector<float>& img, int W, int H, double pa,
   Accumulator& a = acc();
   std::lock_guard<std::mutex> l(gEngineMu);
   std::string err;
-  AnyCalibEngine* eng = GetEngine(a.model, a.digest, a.requestedDevice, err);
+  AnyCalibEngine* eng = GetEngine(a.model, a.requestedDevice, err);
   if (!eng || !eng->Infer(img.data(), W, H, pa, samples, &err)) {
     a.shot.fail(err);
     error("AnyCalib: %s", err.c_str());
     return false;
   }
-  a.device = eng->device();
   return true;
 }
 

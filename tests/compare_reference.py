@@ -2,7 +2,7 @@
 (test-assets/reference.json), as the angle between the rays each assigns to a 21 x 21 grid
 of plate pixels. k1/k2 alone trade off against each other and focal, so aren't compared.
 
-    python compare_reference.py build/anycalib_cli models/anycalib_dist.pt test-assets [cuda|cpu]
+    python compare_reference.py build/anycalib_cli models/anycalib_dist.pt test-assets [auto|cpu]
 """
 import json
 import os
@@ -24,7 +24,7 @@ def rays(f, cx, cy, k1, k2, u, v, s=None):
     return d / np.linalg.norm(d, axis=-1, keepdims=True)
 
 
-def main(cli, model, assets, device="cuda"):
+def main(cli, model, assets, device="auto"):
     ref = json.load(open(os.path.join(assets, "reference.json")))
     tmp = tempfile.mkdtemp()
     names, ppms = [], []

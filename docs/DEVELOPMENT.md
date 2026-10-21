@@ -18,8 +18,7 @@ For fine-tuned weights, add `--weights checkpoint.tar` (an AnyCalib training che
 state_dict or `.safetensors`). The shipped network is a LoRA fine-tune merged into AnyCalib's
 weights and exported with `--resolution 204800`, the input size it was trained at; the engine
 reads that size from the file. The node looks for the network in `model override` (Advanced
-tab), then `$ANYCALIB_MODEL_PATH`, then `models/anycalib_dist.pt` next to the plugin. The
-file's SHA-256 goes into the metadata, so renders say which weights they came from.
+tab), then `$ANYCALIB_MODEL_PATH`, then `models/anycalib_dist.pt` next to the plugin.
 
 The engine and fit reproduce `AnyCalib.predict` with its `simple_division:2` camera (Nuke's
 model, normalised by the focal length) to within 0.007° of ray angle on the test plates.
@@ -54,11 +53,11 @@ ctest --test-dir /tmp/anycalib-core --output-on-failure
 
 ```sh
 ctest --test-dir build    # lens maths, fits, line refinement, frame pooling
-# end to end in Nuke: maps against LensDistortion2 and the legacy node, metadata, buttons, persistence
+# end to end in Nuke: maps against LensDistortion2 and the legacy node, buttons, persistence
 NUKE_PATH=dist/anycalib nuke --nukex -ti tests/nuke/test_anycalib.py test-assets /tmp/anycalib-test
 # engine and fit against AnyCalib's Python pipeline (test-assets/reference.json); needs the
 # stock network, exported without --weights
-.venv/bin/python tests/compare_reference.py build/anycalib_cli models/anycalib_dist.pt test-assets cuda
+.venv/bin/python tests/compare_reference.py build/anycalib_cli models/anycalib_dist.pt test-assets
 ```
 
 Test plates and their licences are listed in `test-assets/SOURCES.md`.
@@ -69,6 +68,5 @@ Test plates and their licences are listed in `test-assets/SOURCES.md`.
 - `src/CameraFit`, `src/LensModel`: the fit and Nuke's lens model.
 - `src/LineDetect`: edges for the overlay and the line refinement.
 - `src/ShotAnalysis`: pools frames into one fit, keeping at most 100,000 rays. A failed or
-  incomplete run keeps the previous result: `analysisModelFile` and `analysisModelSha256` hold
-  the pending network, `modelFile` and `modelSha256` the one behind the current result.
+  incomplete run keeps the previous result.
 - `src/AnyCalibNuke.cpp`: the node. `python/anycalib_nuke.py`: its buttons.

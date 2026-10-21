@@ -57,15 +57,13 @@ static void Print(const char* name, int W, int H, const NukeLD& nk, double focal
 
 int main(int argc, char** argv) {
   if (argc < 4) {
-    std::fprintf(stderr, "usage: %s model.pt auto|cpu|cuda img.ppm [...]\n", argv[0]);
+    std::fprintf(stderr, "usage: %s model.pt auto|cpu img.ppm [...]\n", argv[0]);
     return 2;
   }
   const std::string dev = argv[2];
   std::string err;
-  auto eng = LoadEngine(argv[1], dev == "cpu" ? Device::CPU : dev == "cuda" ? Device::CUDA : Device::Auto,
-                        &err);
+  auto eng = LoadEngine(argv[1], dev == "cpu" ? Device::CPU : Device::Auto, &err);
   if (!eng) { std::fprintf(stderr, "engine: %s\n", err.c_str()); return 1; }
-  std::fprintf(stderr, "device: %s\n", eng->device().c_str());
 
   int first = 3;
   const bool lockCentre = argc > 3 && std::string(argv[3]) == "--lock-centre";

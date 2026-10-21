@@ -122,8 +122,6 @@ std::string ErrorText(const std::exception& e) {
   return e.what();
 }
 
-std::string DeviceName(const torch::Device& device) { return device.is_cuda() ? "CUDA" : "CPU"; }
-
 // Set by export_anycalib.py --resolution; older exports are AnyCalib's 102400.
 double InputPixels(const torch::jit::Module& m) {
   return m.hasattr("resolution") ? double(m.attr("resolution").toTensor().item<int64_t>()) : 102400;
@@ -132,10 +130,7 @@ double InputPixels(const torch::jit::Module& m) {
 class TorchEngine final : public AnyCalibEngine {
  public:
   TorchEngine(torch::jit::Module module, torch::Device device)
-      : module_(std::move(module)), device_(device), name_(DeviceName(device)),
-        pixels_(InputPixels(module_)) {}
-
-  const std::string& device() const override { return name_; }
+      : module_(std::move(module)), device_(device), pixels_(InputPixels(module_)) {}
 
   bool Infer(const float* rgb, int w, int h, double pa, std::vector<RaySample>& out,
              std::string* err) override {
@@ -167,7 +162,6 @@ class TorchEngine final : public AnyCalibEngine {
 
   torch::jit::Module module_;
   torch::Device device_;
-  std::string name_;
   double pixels_;
 };
 
@@ -182,7 +176,7 @@ std::unique_ptr<AnyCalibEngine> TryLoad(const std::string& path, torch::Device d
     m.eval();
     return std::make_unique<TorchEngine>(std::move(m), device);
   } catch (const std::exception& e) {
-    why = DeviceName(device) + " model load failed: " + ErrorText(e);
+    why = std::string(device.is_cuda() ? "CUDA" : "CPU") + " model load failed: " + ErrorText(e);
     return nullptr;
   }
 }
@@ -192,10 +186,9 @@ std::unique_ptr<AnyCalibEngine> TryLoad(const std::string& path, torch::Device d
 std::unique_ptr<AnyCalibEngine> LoadEngine(const std::string& modelPath, Device device,
                                            std::string* err) {
   std::string why;
-  if (device != Device::CPU)
+  if (device == Device::Auto)
     if (auto e = TryLoad(modelPath, torch::Device(torch::kCUDA, 0), why)) return e;
-  if (device != Device::CUDA)
-    if (auto e = TryLoad(modelPath, torch::Device(torch::kCPU), why)) return e;
+  if (auto e = TryLoad(modelPath, torch::Device(torch::kCPU), why)) return e;
   if (err) *err = why;
   return nullptr;
 }

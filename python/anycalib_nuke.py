@@ -1,6 +1,4 @@
 """The AnyCalib node's buttons."""
-import functools
-import hashlib
 import math
 import os
 
@@ -33,12 +31,6 @@ def model_file(n):
             or os.path.join(os.path.dirname(__file__), "models", "anycalib_dist.pt"))
 
 
-@functools.cache
-def sha256(path, size, mtime):  # size and mtime key the cache
-    with open(path, "rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
-
-
 def analyze(n):
     src = n.input(0)
     if src is None:
@@ -50,9 +42,7 @@ def analyze(n):
         nuke.message("AnyCalib: no network at %s. Set 'model override' or $ANYCALIB_MODEL_PATH, "
                      "or install models/anycalib_dist.pt next to the plugin." % path)
         return
-    st = os.stat(path)
     n["analysisModelFile"].setValue(path)
-    n["analysisModelSha256"].setValue(sha256(path, st.st_size, st.st_mtime_ns))
 
     if n["useInputRange"].value():
         first, last = int(src.firstFrame()), int(src.lastFrame())

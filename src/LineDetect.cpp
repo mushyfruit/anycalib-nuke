@@ -17,7 +17,6 @@ struct Grid {
   std::vector<T> d;
   Grid() = default;
   Grid(int w_, int h_) : w(w_), h(h_), d(size_t(w_) * h_, T(0)) {}
-  bool empty() const { return d.empty(); }
   T& at(int x, int y) { return d[size_t(y) * w + x]; }
   T at(int x, int y) const { return d[size_t(y) * w + x]; }
 };
@@ -48,25 +47,6 @@ Img Downsample(const float* gray, int W, int H, int f) {
       g.at(x, y) = float(a / (f * f));
     }
   return g;
-}
-
-Mask DownsampleMask(const uint8_t* mask, int W, int f, int w, int h) {
-  Mask m(w, h);
-  for (int y = 0; y < h * f; ++y)
-    for (int x = 0; x < w * f; ++x)
-      if (mask[size_t(y) * W + x]) m.at(x / f, y / f) = 1;
-  return m;
-}
-
-Mask Dilate(const Mask& m, int r) {
-  Mask out(m.w, m.h);
-  for (int y = 0; y < m.h; ++y)
-    for (int x = 0; x < m.w; ++x)
-      if (m.at(x, y))
-        for (int ny = std::max(0, y - r); ny <= std::min(m.h - 1, y + r); ++ny)
-          for (int nx = std::max(0, x - r); nx <= std::min(m.w - 1, x + r); ++nx)
-            out.at(nx, ny) = 1;
-  return out;
 }
 
 Img Blur(const Img& in) {
@@ -114,13 +94,13 @@ struct Edges {
 };
 
 // NMS, with sub-pixel maxima from a parabola: integer positions are too noisy for lens curvature.
-Edges Suppress(const Gradient& gr, const Mask& ex) {
+Edges Suppress(const Gradient& gr) {
   const Img& mag = gr.mag;
   Edges e{Img(mag.w, mag.h), Img(mag.w, mag.h), Img(mag.w, mag.h), {}};
   for (int y = 1; y < mag.h - 1; ++y)
     for (int x = 1; x < mag.w - 1; ++x) {
       float m = mag.at(x, y);
-      if (m <= 0 || (!ex.empty() && ex.at(x, y))) continue;
+      if (m <= 0) continue;
       float a, b;
       int sx, sy;  // step from a (behind) to b (ahead)
       switch (gr.dir.at(x, y)) {
@@ -345,18 +325,14 @@ Segment Resample(const Chain& c, int f) {
 
 }  // namespace
 
-std::vector<Segment> DetectSegments(const float* gray, int W, int H, int maxSegments,
-                                    const uint8_t* exclude) {
+std::vector<Segment> DetectSegments(const float* gray, int W, int H, int maxSegments) {
   std::vector<Segment> result;
   if (W < 16 || H < 16) return result;
 
   const int f = std::max(1, int(std::ceil(std::max(W, H) / 2048.0)));
   const Img g = Blur(Downsample(gray, W, H, f));
 
-  // Excluded pixels at this resolution, grown by 2 px so edges along the mask's border go too.
-  const Mask ex = exclude ? Dilate(DownsampleMask(exclude, W, f, g.w, g.h), 2) : Mask();
-
-  Edges e = Suppress(Sobel(g), ex);
+  Edges e = Suppress(Sobel(g));
   if (e.strong.size() < 100) return result;
 
   const std::vector<Chain> chains = LinkChains(Hysteresis(e.nms, e.strong), e);
