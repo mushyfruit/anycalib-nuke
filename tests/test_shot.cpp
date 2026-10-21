@@ -20,22 +20,23 @@ static FrameResult Frame(double number, size_t samples = 1000) {
   f.frame = number;
   f.lens.W = 1920;
   f.lens.H = 1080;
-  for (size_t i = 0; i < samples; ++i)
-    f.samples.push_back({float(i), 0.5f, 0, 0, 1});
+  for (size_t i = 0; i < samples; ++i) f.samples.push_back({float(i), 0.5f, 0, 0, 1});
   return f;
 }
 
 int main() {
   {
     ShotAnalysis shot(4, 1000);
-    Check("incomplete shot cannot produce a pooled fit", !shot.complete() && shot.pooledSamples().empty());
+    Check("incomplete shot cannot produce a pooled fit",
+          !shot.complete() && shot.pooledSamples().empty());
     bool added = true;
     for (int i = 3; i >= 0; --i) added = shot.addFrame(Frame(i)) && added;
     size_t retained = 0;
     for (const FrameResult& f : shot.frames()) retained += f.samples.size();
     Check("ray storage obeys the shot budget before pooling", added && retained == 1000);
-    Check("complete shot is ordered and pooled", shot.complete() && shot.frames().front().frame == 0 &&
-          shot.frames().back().frame == 3 && shot.pooledSamples().size() == 1000);
+    Check("complete shot is ordered and pooled",
+          shot.complete() && shot.frames().front().frame == 0 && shot.frames().back().frame == 3 &&
+              shot.pooledSamples().size() == 1000);
     shot.fail("cancelled");
     Check("failure prevents publishing even a complete set of frames",
           !shot.complete() && shot.pooledSamples().empty());
@@ -45,8 +46,10 @@ int main() {
     ShotAnalysis shot(2);
     shot.addFrame(Frame(1));
     FrameResult second = Frame(2);
-    if (pixelAspect) second.lens.pa = 2;
-    else second.lens.W = 2048;
+    if (pixelAspect)
+      second.lens.pa = 2;
+    else
+      second.lens.W = 2048;
     Check(pixelAspect ? "pixel aspect changes fail the shot" : "format changes fail the shot",
           !shot.addFrame(second) && !shot.error().empty() && shot.pooledSamples().empty());
   }
@@ -79,9 +82,9 @@ int main() {
     b.lens = a.lens;
     a.lens.cx = 0.1;
     b.lens.cx = -0.1;
-    Check("map spread detects centre disagreement",
-          std::fabs(CornerShiftPx(a.lens) - CornerShiftPx(b.lens)) < 1e-8 &&
-          FrameSpread({a, b}) > 1);
+    Check(
+        "map spread detects centre disagreement",
+        std::fabs(CornerShiftPx(a.lens) - CornerShiftPx(b.lens)) < 1e-8 && FrameSpread({a, b}) > 1);
     a.lens.k1 = -2;
     Check("undefined maps cannot look stable", !std::isfinite(FrameSpread({a, b})));
   }

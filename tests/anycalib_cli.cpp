@@ -24,10 +24,20 @@ static bool ReadImage(const std::string& path, int& w, int& h, std::vector<float
   f >> magic;
   auto skip = [&] {
     while (f.peek() == '#' || std::isspace(f.peek())) {
-      if (f.peek() == '#') { std::string l; std::getline(f, l); } else f.get();
+      if (f.peek() == '#') {
+        std::string l;
+        std::getline(f, l);
+      } else
+        f.get();
     }
   };
-  skip(); f >> w; skip(); f >> h; skip(); f >> maxv; f.get();
+  skip();
+  f >> w;
+  skip();
+  f >> h;
+  skip();
+  f >> maxv;
+  f.get();
   if (w <= 0 || h <= 0) return false;
   rgb.resize(size_t(w) * h * 3);
   if (magic == "PF" && maxv < 0) {
@@ -48,7 +58,8 @@ static void Print(const char* name, int W, int H, const NukeLD& nk, double focal
                   const FitStats& st, const LineRefinement& lr, double ms) {
   std::printf(
       "{\"image\": \"%s\", \"width\": %d, \"height\": %d, "
-      "\"nuke\": {\"distortion1\": %.6f, \"distortion2\": %.6f, \"centre\": [%.6f, %.6f], \"focal\": %.4f}, "
+      "\"nuke\": {\"distortion1\": %.6f, \"distortion2\": %.6f, \"centre\": [%.6f, %.6f], "
+      "\"focal\": %.4f}, "
       "\"refined\": {\"distortion1\": %.6f, \"distortion2\": %.6f, \"lines\": %d}, "
       "\"rms_deg\": %.4f, \"corner_shift_px\": %.3f, \"ms\": %.1f}\n",
       name, W, H, nk.k1, nk.k2, nk.cx, nk.cy, focal, lr.lens.k1, lr.lens.k2, lr.lines, st.rmsDeg,
@@ -63,7 +74,10 @@ int main(int argc, char** argv) {
   const std::string dev = argv[2];
   std::string err;
   auto eng = LoadEngine(argv[1], dev == "cpu" ? Device::CPU : Device::Auto, &err);
-  if (!eng) { std::fprintf(stderr, "engine: %s\n", err.c_str()); return 1; }
+  if (!eng) {
+    std::fprintf(stderr, "engine: %s\n", err.c_str());
+    return 1;
+  }
 
   int first = 3;
   const bool lockCentre = argc > 3 && std::string(argv[3]) == "--lock-centre";
@@ -71,11 +85,18 @@ int main(int argc, char** argv) {
   for (int i = first; i < argc; ++i) {
     int W, H;
     std::vector<float> rgb;
-    if (!ReadImage(argv[i], W, H, rgb)) { std::fprintf(stderr, "bad image %s\n", argv[i]); return 1; }
+    if (!ReadImage(argv[i], W, H, rgb)) {
+      std::fprintf(stderr, "bad image %s\n", argv[i]);
+      return 1;
+    }
     auto t0 = std::chrono::steady_clock::now();
     std::vector<RaySample> s;
-    if (!eng->Infer(rgb.data(), W, H, 1.0, s, &err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
-    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (!eng->Infer(rgb.data(), W, H, 1.0, s, &err)) {
+      std::fprintf(stderr, "%s\n", err.c_str());
+      return 1;
+    }
+    double ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     NukeLD nk;
     double focal;
     FitStats st;

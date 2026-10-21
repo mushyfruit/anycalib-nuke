@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "AnyCalibEngine.h"
 
-#include <algorithm>
-#include <cmath>
-
 #include <torch/cuda.h>
 #include <torch/script.h>
+
+#include <algorithm>
+#include <cmath>
 
 namespace anycalib {
 
@@ -15,7 +15,7 @@ namespace {
 // AnyCalib.predict's input: a centre crop at H/W clamped to [0.5, 2], sized to about
 // `pixels` px in multiples of the 14 px patch.
 struct Input {
-  int w, h;           // network input
+  int w, h;            // network input
   int x0, y0, cw, ch;  // crop window in the plate
 };
 
@@ -52,9 +52,7 @@ struct Taps {
 };
 
 double Cubic(double x) {
-  return x < 1 ? (1.5 * x - 2.5) * x * x + 1
-       : x < 2 ? ((-0.5 * x + 2.5) * x - 4) * x + 2
-               : 0;
+  return x < 1 ? (1.5 * x - 2.5) * x * x + 1 : x < 2 ? ((-0.5 * x + 2.5) * x - 4) * x + 2 : 0;
 }
 
 std::vector<Taps> ResizeTaps(int in, int out) {
@@ -113,8 +111,8 @@ void AppendSamples(const float* r, const Input& in, std::vector<RaySample>& out)
   for (int py = 0; py < in.h; ++py)
     for (int px = 0; px < in.w; ++px, r += 3)
       if (std::isfinite(r[0]) && std::isfinite(r[1]) && std::isfinite(r[2]))
-        out.push_back({float(in.x0 + (px + 0.5) * sx), float(in.y0 + (py + 0.5) * sy), r[0], r[1],
-                       r[2]});
+        out.push_back(
+            {float(in.x0 + (px + 0.5) * sx), float(in.y0 + (py + 0.5) * sy), r[0], r[1], r[2]});
 }
 
 std::string ErrorText(const std::exception& e) {
@@ -143,8 +141,7 @@ class TorchEngine final : public AnyCalibEngine {
   }
 
  private:
-  bool Forward(std::vector<float>& image, const Input& in, torch::Tensor& rays,
-               std::string* err) {
+  bool Forward(std::vector<float>& image, const Input& in, torch::Tensor& rays, std::string* err) {
     try {
       c10::InferenceMode guard;
       torch::Tensor x = torch::from_blob(image.data(), {1, 3, in.h, in.w}).to(device_);

@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include "AnyCalibEngine.h"
+#include "CameraFit.h"
 #include "DDImage/Executable.h"
 #include "DDImage/Interest.h"
 #include "DDImage/Iop.h"
@@ -19,9 +21,6 @@
 #include "DDImage/Row.h"
 #include "DDImage/ViewerContext.h"
 #include "DDImage/gl.h"
-
-#include "AnyCalibEngine.h"
-#include "CameraFit.h"
 #include "LensModel.h"
 #include "LineDetect.h"
 #include "ShotAnalysis.h"
@@ -31,7 +30,8 @@ using namespace anycalib;
 
 static const char* const CLASS = "AnyCalib";
 static const char* const HELP =
-    "AnyCalib " ANYCALIB_NUKE_VERSION "\n\n"
+    "AnyCalib " ANYCALIB_NUKE_VERSION
+    "\n\n"
     "Estimates lens distortion from the plate with the AnyCalib network "
     "(github.com/javrtg/AnyCalib).\n"
     "  forward.u/v   undistort STMap (as LensDistortion2, output STMap)\n"
@@ -131,7 +131,10 @@ std::string SerialiseLines(int W, int H, const std::vector<FrameResult>& frames,
     o << "F " << f.frame << "\n";
     for (const Segment& s : f.segs) {
       o << "S";
-      for (float v : s.xy) { std::snprintf(b, sizeof(b), " %.1f", v); o << b; }
+      for (float v : s.xy) {
+        std::snprintf(b, sizeof(b), " %.1f", v);
+        o << b;
+      }
       o << "\n";
     }
   }
@@ -297,17 +300,20 @@ void AnyCalibOp::knobs(Knob_Callback f) {
   SetFlags(f, Knob::NO_RERENDER);
   Int_knob(f, &_maxFrames, "maxFrames", "max frames");
   SetFlags(f, Knob::NO_RERENDER);
-  Tooltip(f, "Frames sampled evenly across the range and pooled into one fit. The lens is "
-             "assumed fixed over the range.");
+  Tooltip(f,
+          "Frames sampled evenly across the range and pooled into one fit. The lens is "
+          "assumed fixed over the range.");
   Bool_knob(f, &_lockCentre, "lockCentre", "lock centre");
   SetFlags(f, Knob::STARTLINE | Knob::NO_RERENDER);
-  Tooltip(f, "Keep distortion center at 0, the middle of the format, and fit only distortion 1 "
-             "and 2. Steadier when the distortion is mild.");
+  Tooltip(f,
+          "Keep distortion center at 0, the middle of the format, and fit only distortion 1 "
+          "and 2. Steadier when the distortion is mild.");
   Bool_knob(f, &_refineLines, "refineLines", "refine with lines");
   SetFlags(f, Knob::NO_RERENDER);
-  Tooltip(f, "Adjust distortion 1 and 2 so that long straight edges in the plate come out "
-             "straight, staying close to the network's estimate. Without two usable edges the "
-             "network's estimate is kept.");
+  Tooltip(f,
+          "Adjust distortion 1 and 2 so that long straight edges in the plate come out "
+          "straight, staying close to the network's estimate. Without two usable edges the "
+          "network's estimate is kept.");
   PyScript_knob(f, kAnalyzeScript, "analyze", "Analyze");
   SetFlags(f, Knob::STARTLINE);
 
@@ -315,8 +321,9 @@ void AnyCalibOp::knobs(Knob_Callback f) {
   Divider(f, "Distortion");
   Double_knob(f, &_k1, "distortion1", "distortion 1");
   ClearFlags(f, Knob::SLIDER);
-  Tooltip(f, "CameraTracker distortion1 / LensDistortion2 distortionDenominator0. "
-             "Negative is barrel.");
+  Tooltip(f,
+          "CameraTracker distortion1 / LensDistortion2 distortionDenominator0. "
+          "Negative is barrel.");
   Double_knob(f, &_k2, "distortion2", "distortion 2");
   ClearFlags(f, Knob::SLIDER);
   Tooltip(f, "CameraTracker distortion2 / LensDistortion2 distortionDenominator1.");
@@ -329,14 +336,17 @@ void AnyCalibOp::knobs(Knob_Callback f) {
   Tooltip(f, "How far the undistorted plate extends past the format: the overscan CG needs.");
 
   Divider(f, "Output");
-  Bool_knob(f, &_writeMaps, "writeMaps", "write STMaps (forward.u/v undistort, backward.u/v redistort)");
+  Bool_knob(f, &_writeMaps, "writeMaps",
+            "write STMaps (forward.u/v undistort, backward.u/v redistort)");
   SetFlags(f, Knob::STARTLINE);
-  Tooltip(f, "Also grows the bbox to cover the overscan, so leave it off when the node is inline "
-             "and only the values or Create LensDistortion are needed.");
+  Tooltip(f,
+          "Also grows the bbox to cover the overscan, so leave it off when the node is inline "
+          "and only the values or Create LensDistortion are needed.");
   Bool_knob(f, &_showLines, "showLines", "show detected lines");
   SetFlags(f, Knob::STARTLINE);
-  Tooltip(f, "Green: straight under the estimate. Red: not. Cyan: the estimate's image of the "
-             "best straight line. Grey: the chord.");
+  Tooltip(f,
+          "Green: straight under the estimate. Red: not. Cyan: the estimate's image of the "
+          "best straight line. Grey: the chord.");
 
   Divider(f, "Export");
   PyScript_knob(f, kUndistortScript, "createUndistort", "Create LensDistortion (undistort)");
@@ -348,26 +358,30 @@ void AnyCalibOp::knobs(Knob_Callback f) {
   Double_knob(f, &_frameSpread, "frameSpread", "frame variation (px)");
   SetFlags(f, resultFlags);
   ClearFlags(f, Knob::SLIDER);
-  Tooltip(f, "How much the analysed frames disagree about the lens, in pixels on the undistorted "
-             "plate, where they disagree most. 0 with one frame. Large when the lens changes over "
-             "the range (zoom, focus): analyse those parts separately.");
+  Tooltip(f,
+          "How much the analysed frames disagree about the lens, in pixels on the undistorted "
+          "plate, where they disagree most. 0 with one frame. Large when the lens changes over "
+          "the range (zoom, focus): analyse those parts separately.");
   Int_knob(f, &_linesUsed, "linesUsed", "lines used");
   SetFlags(f, resultFlags);
-  Tooltip(f, "Straight edges that refined the estimate. Only long edges away from the centre "
-             "count, where distortion bends them. With fewer than 2, the network's estimate is "
-             "kept.");
+  Tooltip(f,
+          "Straight edges that refined the estimate. Only long edges away from the centre "
+          "count, where distortion bends them. With fewer than 2, the network's estimate is "
+          "kept.");
   Double_knob(f, &_lineCorrection, "lineCorrection", "line correction (px)");
   SetFlags(f, resultFlags);
   ClearFlags(f, Knob::SLIDER);
-  Tooltip(f, "How far the lines moved the network's estimate, in pixels at the plate's corners. "
-             "If it's large on a plate full of curved architecture, compare with refine with "
-             "lines off.");
+  Tooltip(f,
+          "How far the lines moved the network's estimate, in pixels at the plate's corners. "
+          "If it's large on a plate full of curved architecture, compare with refine with "
+          "lines off.");
 
   Divider(f, "Network");
   File_knob(f, &_model, "model", "model override");
   SetFlags(f, Knob::NO_RERENDER);
-  Tooltip(f, "TorchScript network from tools/export_anycalib.py. Empty: $ANYCALIB_MODEL_PATH, "
-             "then models/anycalib_dist.pt next to the plugin.");
+  Tooltip(f,
+          "TorchScript network from tools/export_anycalib.py. Empty: $ANYCALIB_MODEL_PATH, "
+          "then models/anycalib_dist.pt next to the plugin.");
   Enumeration_knob(f, &_device, kDeviceNames, "device", "device");
   SetFlags(f, Knob::NO_RERENDER);
 
@@ -397,9 +411,9 @@ void AnyCalibOp::updateOverscan() {
   Iop* in = dynamic_cast<Iop*>(input(0));
   if (!in) return;
   in->validate(false);
-  const NukeLD m = LensFor(in->format(), knob("distortion1")->get_value(),
-                           knob("distortion2")->get_value(), knob("distortionCenter")->get_value(0),
-                           knob("distortionCenter")->get_value(1));
+  const NukeLD m =
+      LensFor(in->format(), knob("distortion1")->get_value(), knob("distortion2")->get_value(),
+              knob("distortionCenter")->get_value(0), knob("distortionCenter")->get_value(1));
   if (m.W > 0 && m.H > 0) storeOverscan(m);
 }
 
@@ -486,7 +500,10 @@ void AnyCalibOp::beginExecuting() {
 
 void AnyCalibOp::execute() {
   Accumulator& a = acc();
-  if (!a.shot.error().empty()) { error("AnyCalib: %s", a.shot.error().c_str()); return; }
+  if (!a.shot.error().empty()) {
+    error("AnyCalib: %s", a.shot.error().c_str());
+    return;
+  }
   const double frame = outputContext().frame();
   progressMessage("AnyCalib: reading frame %g", frame);
   progressFraction(0.0);

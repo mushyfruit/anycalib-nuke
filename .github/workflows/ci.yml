@@ -3,9 +3,10 @@ name: ci
 on: [push, pull_request]
 
 jobs:
-  ruff:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: pipx run ruff==0.16.4 check
       - run: pipx run ruff==0.16.4 format --check
+      - run: pipx run clang-format==22.1.8 --dry-run --Werror src/*.cpp src/*.h tests/*.cpp

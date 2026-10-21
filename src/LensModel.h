@@ -15,7 +15,7 @@ struct NukeLD {
   double k1 = 0, k2 = 0;  // distortion1/2 = LensDistortion2 distortionDenominator0/1
   double cx = 0, cy = 0;  // distortionCenter = LensDistortion2 centre, in units of s
   int W = 0, H = 0;
-  double pa = 1;          // pixel aspect
+  double pa = 1;  // pixel aspect
 
   double s() const { return 0.5 * (W > H ? W : H); }
   double centreX() const { return 0.5 * W + cx * s() / pa; }
@@ -29,7 +29,9 @@ struct NukeLD {
   bool distortRadius(double ru, double& rd) const;
 };
 
-struct Extent { double x = 0, y = 0, r = 0, t = 0; };
+struct Extent {
+  double x = 0, y = 0, r = 0, t = 0;
+};
 
 // Sampled along the whole boundary: LensDistortion2's corners and midpoints miss extremes.
 Extent UndistortedExtent(const NukeLD& m, int samplesPerEdge = 257);
@@ -39,7 +41,9 @@ Extent UndistortedExtent(const NukeLD& m, int samplesPerEdge = 257);
 Extent RedistortedExtent(const NukeLD& m, int samplesPerEdge = 257);
 
 // LensDistortion2's Auto bbox: rounded outwards, plus 3 px.
-struct PixelBox { int x, y, r, t; };
+struct PixelBox {
+  int x, y, r, t;
+};
 inline PixelBox AutoBBox(const Extent& e) {
   return {int(std::floor(e.x)) - 3, int(std::floor(e.y)) - 3, int(std::ceil(e.r)) + 3,
           int(std::ceil(e.t)) + 3};

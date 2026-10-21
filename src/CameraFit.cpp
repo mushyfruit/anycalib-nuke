@@ -65,9 +65,13 @@ struct Observation {
 Observation Observe(const RaySample& s) {
   Observation b;
   const double n = std::sqrt(double(s.rx) * s.rx + double(s.ry) * s.ry + double(s.rz) * s.rz);
-  b.o[0] = s.rx / n; b.o[1] = s.ry / n; b.o[2] = s.rz / n;
+  b.o[0] = s.rx / n;
+  b.o[1] = s.ry / n;
+  b.o[2] = s.rz / n;
   const double h = std::hypot(b.o[0], b.o[2]);  // > 0 for rays in front of the camera
-  b.e1[0] = b.o[2] / h; b.e1[1] = 0; b.e1[2] = -b.o[0] / h;
+  b.e1[0] = b.o[2] / h;
+  b.e1[1] = 0;
+  b.e1[2] = -b.o[0] / h;
   b.e2[0] = b.o[1] * b.e1[2];
   b.e2[1] = b.o[2] * b.e1[0] - b.o[0] * b.e1[2];
   b.e2[2] = -b.o[1] * b.e1[0];
@@ -261,8 +265,11 @@ bool FitNukeLD(const std::vector<RaySample>& s, int W, int H, double pa, NukeLD&
     if (err) *err = "Nuke model refinement diverged";
     return false;
   }
-  out.W = W; out.H = H; out.pa = pa;
-  out.k1 = p[1]; out.k2 = p[2];
+  out.W = W;
+  out.H = H;
+  out.pa = pa;
+  out.k1 = p[1];
+  out.k2 = p[2];
   out.cx = (p[3] - 0.5 * W) * pa / S;
   out.cy = (0.5 * H - p[4]) / S;  // image y-down -> Nuke y-up
   focalPx = p[0];

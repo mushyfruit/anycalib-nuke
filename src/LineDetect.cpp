@@ -104,10 +104,30 @@ Edges Suppress(const Gradient& gr) {
       float a, b;
       int sx, sy;  // step from a (behind) to b (ahead)
       switch (gr.dir.at(x, y)) {
-        case 0: a = mag.at(x - 1, y); b = mag.at(x + 1, y); sx = 1; sy = 0; break;
-        case 1: a = mag.at(x - 1, y - 1); b = mag.at(x + 1, y + 1); sx = 1; sy = 1; break;
-        case 2: a = mag.at(x, y - 1); b = mag.at(x, y + 1); sx = 0; sy = 1; break;
-        default: a = mag.at(x + 1, y - 1); b = mag.at(x - 1, y + 1); sx = -1; sy = 1; break;
+        case 0:
+          a = mag.at(x - 1, y);
+          b = mag.at(x + 1, y);
+          sx = 1;
+          sy = 0;
+          break;
+        case 1:
+          a = mag.at(x - 1, y - 1);
+          b = mag.at(x + 1, y + 1);
+          sx = 1;
+          sy = 1;
+          break;
+        case 2:
+          a = mag.at(x, y - 1);
+          b = mag.at(x, y + 1);
+          sx = 0;
+          sy = 1;
+          break;
+        default:
+          a = mag.at(x + 1, y - 1);
+          b = mag.at(x - 1, y + 1);
+          sx = -1;
+          sy = 1;
+          break;
       }
       if (m >= a && m > b) {
         e.nms.at(x, y) = m;
@@ -162,7 +182,7 @@ int EdgeNeighbours(const Mask& edge, int x, int y) {
 }
 
 Chain Trace(Mask& edge, const Edges& e, int x, int y) {
-  static const int ORDER[8][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1},
+  static const int ORDER[8][2] = {{1, 0}, {0, 1},  {-1, 0},  {0, -1},
                                   {1, 1}, {-1, 1}, {-1, -1}, {1, -1}};
   Chain c;
   edge.at(x, y) = 2;
@@ -174,7 +194,8 @@ Chain Trace(Mask& edge, const Edges& e, int x, int y) {
       if (IsEdge(edge, nx, ny)) {
         edge.at(nx, ny) = 2;
         c.push_back({nx + e.offX.at(nx, ny), ny + e.offY.at(nx, ny)});
-        x = nx; y = ny;
+        x = nx;
+        y = ny;
         moved = true;
         break;
       }
@@ -206,12 +227,18 @@ double PerpDist(const Chain& c, size_t a, size_t b, size_t i) {
 
 // Splits at corners. The tolerance grows with length, so lens curvature doesn't split.
 void Split(const Chain& c, size_t a, size_t b, std::vector<Range>& out) {
-  if (b <= a + 2) { out.push_back({a, b}); return; }
+  if (b <= a + 2) {
+    out.push_back({a, b});
+    return;
+  }
   double best = 0;
   size_t bi = a;
   for (size_t i = a + 1; i < b; ++i) {
     double d = PerpDist(c, a, b, i);
-    if (d > best) { best = d; bi = i; }
+    if (d > best) {
+      best = d;
+      bi = i;
+    }
   }
   const double tol = std::max(2.0, 0.06 * Dist(c[a], c[b]));
   if (best > tol) {
@@ -269,7 +296,10 @@ double CubicResidual(const Chain& c, size_t a, size_t b, size_t& worst) {
     double t = T[i], e = Y[i] - (k[0] + k[1] * t + k[2] * t * t + k[3] * t * t * t);
     ss += e * e;
     // interior points only, so a split always leaves two non-empty pieces
-    if (i > 2 && i + 3 < n && std::fabs(e) > best) { best = std::fabs(e); worst = a + i; }
+    if (i > 2 && i + 3 < n && std::fabs(e) > best) {
+      best = std::fabs(e);
+      worst = a + i;
+    }
   }
   return std::sqrt(ss / n);
 }
@@ -277,7 +307,10 @@ double CubicResidual(const Chain& c, size_t a, size_t b, size_t& worst) {
 void SplitSmooth(const Chain& c, size_t a, size_t b, double minLen, std::vector<Range>& out) {
   if (Dist(c[a], c[b]) < minLen) return;
   size_t worst;
-  if (CubicResidual(c, a, b, worst) <= 0.25) { out.push_back({a, b}); return; }
+  if (CubicResidual(c, a, b, worst) <= 0.25) {
+    out.push_back({a, b});
+    return;
+  }
   SplitSmooth(c, a, worst, minLen, out);
   SplitSmooth(c, worst, b, minLen, out);
 }
@@ -352,11 +385,17 @@ struct Scatter {
   double mx = 0, my = 0, sxx = 0, syy = 0, sxy = 0;
   explicit Scatter(const std::vector<double>& xy) {
     const size_t n = xy.size() / 2;
-    for (size_t i = 0; i < n; ++i) { mx += xy[2 * i]; my += xy[2 * i + 1]; }
-    mx /= n; my /= n;
+    for (size_t i = 0; i < n; ++i) {
+      mx += xy[2 * i];
+      my += xy[2 * i + 1];
+    }
+    mx /= n;
+    my /= n;
     for (size_t i = 0; i < n; ++i) {
       double dx = xy[2 * i] - mx, dy = xy[2 * i + 1] - my;
-      sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+      sxx += dx * dx;
+      syy += dy * dy;
+      sxy += dx * dy;
     }
   }
   double angle() const { return 0.5 * std::atan2(2 * sxy, sxx - syy); }  // of the TLS line
@@ -382,7 +421,8 @@ std::vector<double> PredictedLine(const std::vector<double>& und, const NukeLD& 
   double t0 = 1e30, t1 = -1e30;
   for (size_t i = 0; i < n; ++i) {
     double t = (und[2 * i] - sc.mx) * dx + (und[2 * i + 1] - sc.my) * dy;
-    t0 = std::min(t0, t); t1 = std::max(t1, t);
+    t0 = std::min(t0, t);
+    t1 = std::max(t1, t);
   }
   std::vector<double> line;
   for (int k = 0; k <= 24; ++k) {
@@ -461,7 +501,8 @@ double Bow(const std::vector<double>& xy) {
                      S[2] * (S[1] * S[3] - S[2] * S[2]);
   if (std::fabs(det) < 1e-12) return 0;
   const double c = (S[0] * (S[2] * B[2] - S[3] * B[1]) - S[1] * (S[1] * B[2] - S[2] * B[1]) +
-                    B[0] * (S[1] * S[3] - S[2] * S[2])) / det;
+                    B[0] * (S[1] * S[3] - S[2] * S[2])) /
+                   det;
   return -c * kRefPx;
 }
 
@@ -602,14 +643,20 @@ LineRefinement RefineWithLines(const std::vector<const Segment*>& segs, const Nu
     const double det = A[0] * A[2] - A[1] * A[1];
     double step[2] = {-(A[2] * g[0] - A[1] * g[1]) / det, -(A[0] * g[1] - A[1] * g[0]) / det};
     const double big = std::max(std::fabs(step[0]), std::fabs(step[1]));
-    if (big > 0.05) { step[0] *= 0.05 / big; step[1] *= 0.05 / big; }
+    if (big > 0.05) {
+      step[0] *= 0.05 / big;
+      step[1] *= 0.05 / big;
+    }
     const double e0 = objective(k);
     double next[2];
     bool moved = false;
     for (double sc = 1; sc > 0.06; sc *= 0.5) {
       next[0] = k[0] + sc * step[0];
       next[1] = k[1] + sc * step[1];
-      if (objective(next) < e0) { moved = true; break; }
+      if (objective(next) < e0) {
+        moved = true;
+        break;
+      }
     }
     if (!moved) break;
     const double dk = std::hypot(next[0] - k[0], next[1] - k[1]);

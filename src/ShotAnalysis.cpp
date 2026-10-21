@@ -36,9 +36,8 @@ bool ShotAnalysis::addFrame(FrameResult frame) {
   if (!checkFormat(frame.lens.W, frame.lens.H, frame.lens.pa)) return false;
   if (!std::isfinite(frame.frame) || frames_.size() >= expectedFrames_) {
     fail("unexpected analysis frame");
-  } else if (std::any_of(frames_.begin(), frames_.end(), [&](const FrameResult& f) {
-               return f.frame == frame.frame;
-             })) {
+  } else if (std::any_of(frames_.begin(), frames_.end(),
+                         [&](const FrameResult& f) { return f.frame == frame.frame; })) {
     fail("duplicate analysis frame; analyze one view at a time");
   } else if (frame.samples.size() < 20) {
     fail("too few unmasked rays in an analysis frame");

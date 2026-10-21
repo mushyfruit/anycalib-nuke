@@ -30,7 +30,10 @@ bool InvertByNewton(const NukeLD& m, double ru, double& rd) {
     if (rn <= 0) rn = 0.5 * r;
     r = rn;
     if (std::fabs(step) < 1e-13 * std::max(1.0, r)) {
-      if (GSlope(m, r) > 0 && Denominator(m, r) > 0) { rd = r; return true; }
+      if (GSlope(m, r) > 0 && Denominator(m, r) > 0) {
+        rd = r;
+        return true;
+      }
       break;
     }
   }
@@ -42,7 +45,10 @@ bool InvertByBisection(const NukeLD& m, double ru, double& rd) {
   double rmax = 0;
   const double h = 1e-3;
   while (rmax < 50 && Denominator(m, rmax + h) > 1e-9 && GSlope(m, rmax + h) > 0) rmax += h;
-  if (G(m, rmax) < ru) { rd = rmax; return false; }  // beyond the invertible range
+  if (G(m, rmax) < ru) {
+    rd = rmax;
+    return false;
+  }  // beyond the invertible range
   double lo = 0, hi = rmax;
   for (int it = 0; it < 200; ++it) {
     const double mid = 0.5 * (lo + hi);
@@ -78,8 +84,14 @@ bool NukeLD::distort(double xu, double yu, double& xd, double& yd) const {
 }
 
 bool NukeLD::distortRadius(double ru, double& rd) const {
-  if (ru <= 0) { rd = 0; return true; }
-  if (isIdentity()) { rd = ru; return true; }
+  if (ru <= 0) {
+    rd = 0;
+    return true;
+  }
+  if (isIdentity()) {
+    rd = ru;
+    return true;
+  }
   // Inverts G on its branch through r = 0.
   return InvertByNewton(*this, ru, rd) || InvertByBisection(*this, ru, rd);
 }
@@ -87,8 +99,10 @@ bool NukeLD::distortRadius(double ru, double& rd) const {
 namespace {
 
 void Grow(Extent& e, double x, double y) {
-  e.x = std::min(e.x, x); e.r = std::max(e.r, x);
-  e.y = std::min(e.y, y); e.t = std::max(e.t, y);
+  e.x = std::min(e.x, x);
+  e.r = std::max(e.r, x);
+  e.y = std::min(e.y, y);
+  e.t = std::max(e.t, y);
 }
 
 Extent OrFormat(const Extent& e, const NukeLD& m) {
@@ -101,10 +115,22 @@ void FormatBoundary(const NukeLD& m, double t, double& x, double& y) {
   const int k = std::min(3, int(t));
   const double f = t - k;
   switch (k) {
-    case 0: x = f * m.W; y = 0; break;
-    case 1: x = m.W; y = f * m.H; break;
-    case 2: x = (1 - f) * m.W; y = m.H; break;
-    default: x = 0; y = (1 - f) * m.H; break;
+    case 0:
+      x = f * m.W;
+      y = 0;
+      break;
+    case 1:
+      x = m.W;
+      y = f * m.H;
+      break;
+    case 2:
+      x = (1 - f) * m.W;
+      y = m.H;
+      break;
+    default:
+      x = 0;
+      y = (1 - f) * m.H;
+      break;
   }
 }
 
@@ -119,8 +145,10 @@ Extent UndistortedExtent(const NukeLD& m, int n) {
   };
   for (int i = 0; i < n; ++i) {
     const double t = double(i) / (n - 1);
-    add(t * m.W, 0); add(t * m.W, m.H);
-    add(0, t * m.H); add(m.W, t * m.H);
+    add(t * m.W, 0);
+    add(t * m.W, m.H);
+    add(0, t * m.H);
+    add(m.W, t * m.H);
   }
   return OrFormat(e, m);
 }
