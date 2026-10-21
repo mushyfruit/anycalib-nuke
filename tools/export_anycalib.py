@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright the anycalib-nuke authors.
 # SPDX-License-Identifier: Apache-2.0
 """Export the AnyCalib network to TorchScript (image -> rays) for the libtorch Nuke ships.
@@ -8,11 +7,13 @@ Run with torch 2.7.1, the version in Nuke 17. The camera fit happens in the plug
 interpolation is rewritten with shape-generic ops so the trace runs at any resolution
 and still matches upstream.
 """
+
 from __future__ import annotations
 
 import argparse
 import math
 import os
+import pickle
 import sys
 import types
 import warnings
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def _exact_interp(vit):
@@ -97,7 +98,7 @@ def load_weights(m: nn.Module, path: str | os.PathLike, strict: bool = True) -> 
     else:
         try:
             sd = torch.load(path, map_location="cpu", weights_only=True)
-        except Exception:
+        except pickle.UnpicklingError:
             # AnyCalib's training checkpoints hold numpy scalars, which weights_only refuses.
             print("[weights] falling back to full unpickling: only use checkpoints you trust")
             sd = torch.load(path, map_location="cpu", weights_only=False)
@@ -107,10 +108,14 @@ def load_weights(m: nn.Module, path: str | os.PathLike, strict: bool = True) -> 
             break
     sd = {k.removeprefix("module.").removeprefix("_orig_mod."): v for k, v in sd.items()}
     missing, unexpected = m.load_state_dict(sd, strict=False)
-    print(f"[weights] {path}: {len(sd)} tensors, {len(missing)} missing, {len(unexpected)} unexpected")
+    print(
+        f"[weights] {path}: {len(sd)} tensors, {len(missing)} missing, {len(unexpected)} unexpected"
+    )
     if strict and (missing or unexpected):
-        raise SystemExit(f"[weights] keys don't match (--non-strict loads anyway): "
-                         f"missing {missing[:8]}, unexpected {unexpected[:8]}")
+        raise SystemExit(
+            f"[weights] keys don't match (--non-strict loads anyway): "
+            f"missing {missing[:8]}, unexpected {unexpected[:8]}"
+        )
 
 
 def load_plugin_input(image_path, resolution):
@@ -142,8 +147,12 @@ def main(argv=None) -> int:
     ap.add_argument("--model-id", default="anycalib_dist", help="AnyCalib's pretrained model")
     ap.add_argument("--weights", help="fine-tuned checkpoint loaded over --model-id")
     ap.add_argument("--non-strict", action="store_true", help="allow missing or unexpected keys")
-    ap.add_argument("--resolution", type=int, default=102400,
-                    help="input pixels the weights were trained at (102400 for AnyCalib's own)")
+    ap.add_argument(
+        "--resolution",
+        type=int,
+        default=102400,
+        help="input pixels the weights were trained at (102400 for AnyCalib's own)",
+    )
     ap.add_argument("--verify-image", help="compare the TorchScript and PyTorch rays on this image")
     args = ap.parse_args(argv)
     if not torch.__version__.startswith("2.7.1"):
@@ -182,8 +191,10 @@ def main(argv=None) -> int:
             d_patched, ang_patched = ray_diff(rays, net(x).numpy())
         _, ang_upstream = ray_diff(rays, upstream)
         ok = d_patched <= 1e-3
-        print(f"TorchScript vs patched model: max |d| {d_patched:.2e}, max {ang_patched:.4f} deg "
-              f"-> {'PASS' if ok else 'FAIL'}")
+        print(
+            f"TorchScript vs patched model: max |d| {d_patched:.2e}, max {ang_patched:.4f} deg "
+            f"-> {'PASS' if ok else 'FAIL'}"
+        )
         print(f"TorchScript vs upstream AnyCalib: max {ang_upstream:.4f} deg")
     print(f"wrote {args.output}")
     return 0 if ok else 1

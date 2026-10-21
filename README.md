@@ -28,7 +28,7 @@ Then add the `anycalib` folder to Nuke's plugin path, for example in `~/.nuke/in
 slashes on Windows too):
 
 ```python
-nuke.pluginAddPath('/path/to/anycalib')
+nuke.pluginAddPath("/path/to/anycalib")
 ```
 
 The node is under Transform > AnyCalib. To build it yourself, see

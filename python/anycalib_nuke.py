@@ -1,4 +1,5 @@
 """The AnyCalib node's buttons."""
+
 import math
 import os
 
@@ -17,8 +18,9 @@ def working_space():
     config = ocio.Config.CreateFromFile(root["OCIOConfigPath"].value())
     ref = ocio.Config.CreateFromFile("ocio://cg-config-latest")
     try:  # through both configs' aces_interchange role
-        cpu = ocio.Config.GetProcessorFromConfigs(config, root["workingSpaceLUT"].value(), ref,
-                                                  "lin_rec709").getDefaultCPUProcessor()
+        cpu = ocio.Config.GetProcessorFromConfigs(
+            config, root["workingSpaceLUT"].value(), ref, "lin_rec709"
+        ).getDefaultCPUProcessor()
     except ocio.Exception:  # no interchange role: nuke-default, whose linear is Rec.709
         return IDENTITY
     cols = [cpu.applyRGB(v) for v in ([1, 0, 0], [0, 1, 0], [0, 0, 1])]
@@ -27,8 +29,11 @@ def working_space():
 
 def model_file(n):
     """The network: model override, then $ANYCALIB_MODEL_PATH, then models/ next to the plugin."""
-    return (n["model"].evaluate() or os.environ.get("ANYCALIB_MODEL_PATH")
-            or os.path.join(os.path.dirname(__file__), "models", "anycalib_dist.pt"))
+    return (
+        n["model"].evaluate()
+        or os.environ.get("ANYCALIB_MODEL_PATH")
+        or os.path.join(os.path.dirname(__file__), "models", "anycalib_dist.pt")
+    )
 
 
 def analyze(n):
@@ -39,8 +44,10 @@ def analyze(n):
     n["inputMatrix"].setValue(working_space())
     path = model_file(n)
     if not os.path.isfile(path):
-        nuke.message("AnyCalib: no network at %s. Set 'model override' or $ANYCALIB_MODEL_PATH, "
-                     "or install models/anycalib_dist.pt next to the plugin." % path)
+        nuke.message(
+            f"AnyCalib: no network at {path}. Set 'model override' or $ANYCALIB_MODEL_PATH, "
+            "or install models/anycalib_dist.pt next to the plugin."
+        )
         return
     n["analysisModelFile"].setValue(path)
 
@@ -69,7 +76,7 @@ def create_lens_distortion(n, undistort):
     ld["distortionDenominator1"].setValue(n["distortion2"].value())
     ld["centre"].setValue([n["distortionCenter"].value(0), n["distortionCenter"].value(1)])
     ld["output"].setValue("Undistort" if undistort else "Redistort")
-    ld["label"].setValue("%s\nfrom %s" % ("undistort" if undistort else "redistort", n.name()))
+    ld["label"].setValue(f"{'undistort' if undistort else 'redistort'}\nfrom {n.name()}")
     ld.setXYpos(n.xpos() + (-110 if undistort else 110), n.ypos() + 60)
     if undistort and n.input(0) is not None:
         ld.setInput(0, n.input(0))

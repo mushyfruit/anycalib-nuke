@@ -4,6 +4,7 @@ of plate pixels. k1/k2 alone trade off against each other and focal, so aren't c
 
     python compare_reference.py build/anycalib_cli models/anycalib_dist.pt test-assets [auto|cpu]
 """
+
 import json
 import os
 import subprocess
@@ -25,7 +26,8 @@ def rays(f, cx, cy, k1, k2, u, v, s=None):
 
 
 def main(cli, model, assets, device="auto"):
-    ref = json.load(open(os.path.join(assets, "reference.json")))
+    with open(os.path.join(assets, "reference.json")) as f:
+        ref = json.load(f)
     tmp = tempfile.mkdtemp()
     names, ppms = [], []
     for name in sorted(ref):
@@ -33,9 +35,13 @@ def main(cli, model, assets, device="auto"):
         Image.open(os.path.join(assets, name)).convert("RGB").save(p)
         names.append(name)
         ppms.append(p)
-    out = subprocess.run([cli, model, device] + ppms, capture_output=True, text=True).stdout
+    out = subprocess.run(
+        [cli, model, device, *ppms], capture_output=True, text=True, check=True
+    ).stdout
     ours = [json.loads(l) for l in out.splitlines() if l.startswith("{")]
-    print("%-42s %9s %9s %9s %9s  %s" % ("image", "f ref", "f ours", "max deg", "mean deg", "centre diff px"))
+    print(
+        f"{'image':<42} {'f ref':>9} {'f ours':>9} {'max deg':>9} {'mean deg':>9}  centre diff px"
+    )
     worst = 0.0
     for name, o in zip(names, ours):
         r = ref[name]
@@ -47,9 +53,11 @@ def main(cli, model, assets, device="auto"):
         b = rays(n["focal"], cx, cy, n["distortion1"], n["distortion2"], u, v, S)
         ang = np.degrees(np.arccos(np.clip((a * b).sum(-1), -1, 1)))
         worst = max(worst, ang.max())
-        print("%-42s %9.1f %9.1f %9.3f %9.3f  (%.1f, %.1f)" % (
-            name, r["f"], n["focal"], ang.max(), ang.mean(), cx - r["cx"], cy - r["cy"]))
-    print("\nworst ray-angle difference: %.3f deg" % worst)
+        print(
+            f"{name:<42} {r['f']:9.1f} {n['focal']:9.1f} {ang.max():9.3f} {ang.mean():9.3f}"
+            f"  ({cx - r['cx']:.1f}, {cy - r['cy']:.1f})"
+        )
+    print(f"\nworst ray-angle difference: {worst:.3f} deg")
 
 
 if __name__ == "__main__":
